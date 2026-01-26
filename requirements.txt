@@ -1,0 +1,55 @@
+# Core dependencies
+python-dotenv>=1.0.0
+
+# AI/ML frameworks
+openai>=1.0.0
+anthropic>=0.7.0
+# torch>=2.0.0
+# transformers>=4.30.0
+
+# API framework
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+pydantic>=2.0.0
+
+# AWS SDK
+boto3>=1.28.0
+
+# Data processing
+pyyaml>=6.0
+pandas>=2.0.0
+
+# Utilities
+requests>=2.31.0
+python-multipart>=0.0.6
+
+# Development tools
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-asyncio>=0.21.0
+black>=23.7.0
+flake8>=6.1.0
+mypy>=1.5.0
+
+# Jupyter
+jupyter>=1.0.0
+jupyterlab>=4.0.0
+ipykernel>=6.25.0
+
+# Visualization (for notebooks)
+matplotlib>=3.7.0
+seaborn>=0.12.0
+plotly>=5.16.0
+
+# Monitoring and logging
+python-json-logger>=2.0.7
+
+# Testing utilities
+httpx>=0.24.0  # for API testing
+faker>=19.0.0  # for generating test data
+
+# Optional: vLLM (uncomment if needed)
+# vllm>=0.2.0
+
+# Optional: Ollama (uncomment if needed)
+# ollama>=0.1.0

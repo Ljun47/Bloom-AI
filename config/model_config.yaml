@@ -1,0 +1,47 @@
+# Model Configuration
+# AI 모델 관련 설정
+
+model:
+  # 사용할 기본 모델
+  default_model: "gpt-4"
+  
+  # 모델별 설정
+  models:
+    gpt-4:
+      temperature: 0.7
+      max_tokens: 2000
+      top_p: 0.9
+      
+    claude:
+      temperature: 0.7
+      max_tokens: 2000
+      
+    local_llm:
+      model_path: ""
+      temperature: 0.7
+      max_tokens: 2000
+
+  # vLLM 설정
+  vllm:
+    enabled: false
+    host: "localhost"
+    port: 8000
+    
+  # Ollama 설정
+  ollama:
+    enabled: false
+    host: "localhost"
+    port: 11434
+    model: "llama2"
+
+# 심리상담 특화 설정
+counseling:
+  max_conversation_length: 20
+  context_window: 10
+  empathy_level: "high"
+  
+# 안전 설정
+safety:
+  content_filter: true
+  crisis_detection: true
+  auto_escalation: true
