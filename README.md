@@ -1,236 +1,118 @@
 # Mind-Log
 
-> 생성형 AI를 활용한 심리상담 AI 시스템
+초개인화 AI 멘탈케어 & 시각화 플랫폼
 
-## 📋 프로젝트 소개
-
-Mind-Log는 생성형 AI 기술을 활용하여 공감적이고 전문적인 심리상담 서비스를 제공하는 AI 프로젝트입니다. 이 저장소는 Mind-Log 프로젝트의 생성형 AI 엔진 부분을 포함하고 있습니다.
-
-### 주요 특징
-
-- 🤖 **다양한 LLM 지원**: GPT-4, Claude, vLLM, Ollama 등
-- 💬 **공감적 대화**: 심리상담 특화 프롬프트 엔지니어링
-- 🔄 **체인 프롬프트**: 복잡한 상담 워크플로우 구현
-- 🎯 **Few-shot 학습**: 고품질 상담 예시 활용
-- 📊 **응답 캐싱**: API 비용 최적화
-- 🛡️ **안전 장치**: 위기 상황 감지 및 대응
-
-## 🏗️ 프로젝트 구조
-
-```
-mind-log/
-├── config/                 # 설정 파일
-│   ├── model_config.yaml          # 모델 설정
-│   ├── prompt_templates.yaml      # 프롬프트 템플릿
-│   └── logging_config.yaml        # 로깅 설정
-├── src/                    # 소스 코드
-│   ├── llm/                       # LLM 클라이언트
-│   │   ├── base.py                # 기본 추상 클래스
-│   │   ├── claude_client.py       # Claude 클라이언트
-│   │   └── gpt_client.py          # GPT 클라이언트
-│   ├── prompt_engineering/        # 프롬프트 엔지니어링
-│   │   ├── templates.py           # 템플릿 관리
-│   │   ├── few_shot.py            # Few-shot 예시
-│   │   └── chainer.py             # 체인 프롬프트
-│   ├── utils/                     # 유틸리티
-│   │   ├── logger.py              # 로깅
-│   │   ├── rate_limiter.py        # 속도 제한
-│   │   ├── token_counter.py       # 토큰 계산
-│   │   └── cache.py               # 캐싱
-│   ├── handlers/                  # 에러 핸들링
-│   ├── api/                       # API 엔드포인트
-│   └── models/                    # AI 모델 관련
-├── data/                   # 데이터
-│   ├── cache/                     # 캐시 데이터
-│   ├── prompts/                   # 프롬프트 데이터
-│   ├── outputs/                   # 출력 결과
-│   └── embeddings/                # 임베딩 데이터
-├── examples/               # 사용 예시
-│   ├── basic_completion.py        # 기본 완성
-│   ├── chat_session.py            # 채팅 세션
-│   └── chain_prompts.py           # 체인 프롬프트
-├── notebooks/              # Jupyter 노트북
-├── tests/                  # 테스트 코드
-├── scripts/                # 실행 스크립트
-├── docs/                   # 문서
-├── requirements.txt        # Python 의존성
-├── setup.py                # 설치 설정
-├── Dockerfile              # Docker 이미지
-└── README.md               # 프로젝트 문서
-```
-
-## 🚀 시작하기
-
-### 필요 조건
-
-- Python 3.8 이상
-- pip 또는 conda
-
-### 설치
-
-```bash
-# 저장소 클론
-git clone https://github.com/your-username/mind-log.git
-cd mind-log
-
-# 가상환경 생성 및 활성화
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# 의존성 설치
-pip install -r requirements.txt
-```
-
-### 환경 변수 설정
-
-`.env` 파일을 생성하고 API 키를 설정하세요:
-
-```env
-OPENAI_API_KEY=your_openai_api_key
-ANTHROPIC_API_KEY=your_anthropic_api_key
-```
-
-### 기본 사용법
-
-```python
-from src.llm.gpt_client import GPTClient
-from src.prompt_engineering.templates import PromptTemplate
-
-# 클라이언트 초기화
-config = {"api_key": "your-api-key"}
-client = GPTClient(config)
-
-# 프롬프트 템플릿 로드
-template = PromptTemplate()
-system_prompt = template.get_system_prompt("counselor")
-
-# 대화 생성
-messages = [
-    {"role": "system", "content": system_prompt},
-    {"role": "user", "content": "요즘 스트레스를 많이 받아요"}
-]
-
-response = client.chat(messages)
-print(response)
-```
-
-더 많은 예시는 [examples/](examples/) 디렉토리를 참고하세요.
-
-## 📚 문서
-
-- [설정 가이드](config/README.md)
-- [소스 코드 구조](src/README.md)
-- [데이터 관리](data/README.md)
-- [사용 예시](examples/README.md)
-- [테스트 가이드](tests/README.md)
-- [노트북 가이드](notebooks/README.md)
-- [스크립트 가이드](scripts/README.md)
-
-## 🧪 테스트
-
-```bash
-# 모든 테스트 실행
-pytest
-
-# 커버리지 포함
-pytest --cov=src --cov-report=html
-
-# 특정 테스트만 실행
-pytest tests/test_llm_clients.py
-```
-
-## 🐳 Docker
-
-```bash
-# 이미지 빌드
-docker build -t mind-log:latest .
-
-# 컨테이너 실행
-docker run -p 8000:8000 --env-file .env mind-log:latest
-```
-
-## 🛠️ 기술 스택
-
-### 언어 및 프레임워크
-- **Python 3.8+**: 메인 프로그래밍 언어
-- **FastAPI**: API 서버 (예정)
-
-### AI/ML
-- **OpenAI GPT**: 주요 언어 모델
-- **Anthropic Claude**: 대안 언어 모델
-- **vLLM**: 고성능 추론 엔진 (예정)
-- **Ollama**: 로컬 LLM 실행 (예정)
-
-### 클라우드 & 배포
-- **AWS**: 클라우드 인프라 (예정)
-- **Docker**: 컨테이너화
-
-### 개발 도구
-- **pytest**: 테스트 프레임워크
-- **black**: 코드 포매터
-- **flake8**: 린터
-
-## 🗺️ 개발 로드맵
-
-### Phase 1: 기본 기능 (현재)
-- [x] 프로젝트 구조 설정
-- [x] LLM 클라이언트 인터페이스
-- [x] 프롬프트 엔지니어링 도구
-- [ ] 기본 API 서버
-- [ ] 단위 테스트
-
-### Phase 2: 고급 기능
-- [ ] vLLM 통합
-- [ ] Ollama 통합
-- [ ] 응답 품질 평가
-- [ ] 대화 컨텍스트 관리
-- [ ] 위기 상황 감지
-
-### Phase 3: 배포 및 최적화
-- [ ] AWS 배포
-- [ ] 성능 최적화
-- [ ] 모니터링 시스템
-- [ ] CI/CD 파이프라인
-
-## 🤝 기여
-
-기여는 언제나 환영합니다! 다음 절차를 따라주세요:
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-### 코딩 스타일
-
-- PEP 8 준수
-- 타입 힌트 사용
-- Docstring 작성 (Google 스타일)
-- 테스트 코드 포함
-
-## 📄 라이선스
-
-이 프로젝트는 MIT 라이선스 하에 있습니다. 자세한 내용은 [LICENSE](LICENSE) 파일을 참조하세요.
-
-## 📧 문의
-
-프로젝트 관련 문의사항이 있으시면 이슈를 생성해주세요.
-
-## 🙏 감사의 말
-
-이 프로젝트는 다음 오픈소스 프로젝트들을 참고하였습니다:
-- OpenAI API
-- Anthropic Claude
-- LangChain
-- FastAPI
-
-## ⚠️ 주의사항
-
-- 이 프로젝트는 전문적인 의료 또는 정신건강 서비스를 대체하지 않습니다.
-- 심각한 정신건강 문제가 있는 경우 전문가의 도움을 받으세요.
-- 사용자 데이터는 개인정보 보호 정책에 따라 안전하게 처리됩니다.
+사용자의 감정과 생각을 AI가 분석하여 개인화된 멘탈케어 서비스를 제공하고, 내면 상태를 시각적 이미지로 표현합니다.
 
 ---
 
-**Made with ❤️ for better mental health support**
+## 듀얼모드 아키텍처
+
+Mind-Log는 두 가지 모드를 지원하는 멀티에이전트 시스템입니다.
+
+| 항목 | 대화모드 | 팟캐스트모드 |
+|-----|---------|------------|
+| 에이전트 | 13개 전용 | 7개 전용 |
+| 처리 방식 | 실시간 스트리밍 | 배치 처리 |
+| 출력 형식 | 자유로운 텍스트 | 구조화된 스크립트 |
+| 응답 시간 | ~5-10초 | ~18-20초 |
+
+### TIER 기반 파이프라인
+
+```
+TIER 0: Intent Classifier → 의도 분류
+TIER 1: Safety + Emotion + Context + Reasoning (병렬)
+TIER 2: Synthesis / Script Generator (순차)
+TIER 3: Validator / Batch Validator (검증)
+TIER 4: Personalization / Script Personalizer (최종)
+비동기: Visualization + Telemetry + Learning
+```
+
+---
+
+## 기술 스택
+
+| 구분 | 기술 |
+|------|------|
+| LLM | Anthropic Claude (Opus 4.5, Sonnet 4, Haiku) |
+| 오케스트레이션 | LangGraph StateGraph |
+| 벡터 DB | Pinecone / pgvector |
+| 관계형 DB | PostgreSQL |
+| 그래프 DB | Neo4j |
+| 캐시 | Redis |
+| 이미지 저장 | S3 / CDN |
+| 프레임워크 | FastAPI + Uvicorn |
+| CI/CD | GitHub Actions |
+
+---
+
+## 빠른 시작
+
+```bash
+# 1. 저장소 클론
+git clone https://github.com/your-org/mind-log.git
+cd mind-log
+
+# 2. 가상환경 생성
+python -m venv .venv
+source .venv/bin/activate
+
+# 3. 의존성 설치
+pip install -r requirements.txt
+
+# 4. 환경변수 설정
+cp .env.example .env
+# .env 파일에 API 키 입력
+
+# 5. 테스트 실행
+pytest tests/
+```
+
+---
+
+## 프로젝트 구조
+
+```
+mind-log/
+├── src/
+│   ├── agents/           # 에이전트 구현
+│   │   ├── conversation/ # 대화모드 에이전트 (13개)
+│   │   ├── podcast/      # 팟캐스트모드 에이전트 (7개)
+│   │   └── shared/       # 공용 에이전트 유틸리티
+│   ├── models/           # AgentState, AgentMessage 스키마
+│   ├── api/              # 백엔드 API 클라이언트
+│   ├── graph/            # LangGraph 워크플로우 정의
+│   └── utils/            # 공통 유틸리티
+├── config/               # 환경 설정 파일
+├── tests/                # 테스트 코드
+├── docs/                 # 프로젝트 문서
+└── CLAUDE.md             # AI 개발 가이드 (아키텍처 + 협업 규칙)
+```
+
+---
+
+## 문서 안내
+
+| 문서 | 설명 |
+|------|------|
+| [CLAUDE.md](CLAUDE.md) | 아키텍처 + 협업 규칙 + API 규약 통합 가이드 |
+| [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) | 폴더 구조 및 파일 역할 상세 |
+| [docs/GIT_WORKFLOW.md](docs/GIT_WORKFLOW.md) | 브랜치 전략, 커밋 컨벤션, PR 가이드 |
+| [docs/QUICK_START.md](docs/QUICK_START.md) | 환경 설정 및 첫 에이전트 개발 가이드 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 기여 가이드 및 코드 리뷰 규칙 |
+
+---
+
+## 팀 구성
+
+| 개발자 | 도메인 | 담당 에이전트 |
+|--------|--------|-------------|
+| Dev-A | 분석 (Analysis) | Intent Classifier, Emotion, Context, Content Analyzer |
+| Dev-B | 추론/생성 (Reasoning) | Reasoning, Memory, Knowledge, Synthesis, Script Generator |
+| Dev-C | 검증/부가 (Validation) | Safety, Validator, Personalization, Visualization, Learning, Telemetry |
+
+---
+
+## 라이선스
+
+MIT License

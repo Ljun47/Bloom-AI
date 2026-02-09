@@ -1,221 +1,139 @@
-# Mind-Log 프로젝트 구조 가이드
+# 프로젝트 구조
 
-## 📁 전체 디렉토리 구조
+Mind-Log 멀티에이전트 AI 시스템의 디렉토리 구조 및 각 파일의 역할을 설명합니다.
+
+---
+
+## 전체 구조
 
 ```
 mind-log/
-├── .env.example              # 환경 변수 템플릿
-├── .gitignore                # Git 무시 파일
-├── Dockerfile                # Docker 이미지 정의
-├── README.md                 # 프로젝트 메인 문서
-├── requirements.txt          # Python 의존성
-├── setup.py                  # 패키지 설치 설정
 │
-├── config/                   # 설정 파일 디렉토리
-│   ├── README.md            # 설정 가이드
-│   ├── model_config.yaml    # 모델 설정
-│   ├── prompt_templates.yaml # 프롬프트 템플릿
-│   └── logging_config.yaml  # 로깅 설정
+├── CLAUDE.md                    # AI 개발 통합 가이드 (아키텍처 + 협업 규칙)
+├── README.md                    # 프로젝트 소개
+├── CONTRIBUTING.md              # 기여 가이드
+├── requirements.txt             # Python 의존성
+├── Dockerfile                   # Docker 빌드 설정
+├── .env.example                 # 환경변수 템플릿
+├── .gitignore                   # Git 무시 파일
 │
-├── src/                      # 소스 코드 디렉토리
-│   ├── README.md            # 소스 코드 가이드
+├── src/                         # 소스 코드
 │   ├── __init__.py
 │   │
-│   ├── llm/                 # LLM 클라이언트
+│   ├── models/                  # 공유 데이터 모델 (Protected - 3인 합의 필수)
 │   │   ├── __init__.py
-│   │   ├── base.py          # 추상 기본 클래스
-│   │   ├── claude_client.py # Claude API
-│   │   └── gpt_client.py    # OpenAI API
+│   │   ├── agent_state.py       # AgentState TypedDict 정의
+│   │   └── message.py           # AgentMessage 통신 프로토콜
 │   │
-│   ├── prompt_engineering/  # 프롬프트 엔지니어링
+│   ├── agents/                  # 에이전트 구현
 │   │   ├── __init__.py
-│   │   ├── templates.py     # 템플릿 관리
-│   │   ├── few_shot.py      # Few-shot 예시
-│   │   └── chainer.py       # 체인 프롬프트
+│   │   │
+│   │   ├── conversation/        # 대화모드 에이전트 (13개)
+│   │   │   ├── __init__.py
+│   │   │   ├── intent_classifier.py   # [Dev-A] TIER 0: 의도 분류
+│   │   │   ├── safety.py              # [Dev-C] TIER 1: 안전성 검사
+│   │   │   ├── emotion.py             # [Dev-A] TIER 1: 감정 분석
+│   │   │   ├── context.py             # [Dev-A] TIER 1: 맥락 관리
+│   │   │   ├── memory.py              # [Dev-B] 독립: 개인 기억 검색
+│   │   │   ├── knowledge.py           # [Dev-B] 독립: 전문 지식 검색
+│   │   │   ├── reasoning.py           # [Dev-B] TIER 1: 심층 추론
+│   │   │   ├── synthesis.py           # [Dev-B] TIER 2: 응답 생성
+│   │   │   ├── validator.py           # [Dev-C] TIER 3: 품질 검증
+│   │   │   ├── personalization.py     # [Dev-C] TIER 4: 개인화
+│   │   │   ├── visualization.py       # [Dev-C] 비동기: 시각화
+│   │   │   ├── telemetry.py           # [Dev-C] 비동기: 텔레메트리
+│   │   │   └── learning.py            # [Dev-C] 비동기: 학습
+│   │   │
+│   │   ├── podcast/             # 팟캐스트모드 에이전트 (7개)
+│   │   │   ├── __init__.py
+│   │   │   ├── content_analyzer.py    # [Dev-A] TIER 1: 콘텐츠 분석
+│   │   │   ├── episode_memory.py      # [Dev-B] 독립: 에피소드 기억
+│   │   │   ├── podcast_reasoning.py   # [Dev-B] TIER 1: 팟캐스트 추론
+│   │   │   ├── script_generator.py    # [Dev-B] TIER 2: 스크립트 생성
+│   │   │   ├── batch_validator.py     # [Dev-C] TIER 3: 배치 검증
+│   │   │   ├── script_personalizer.py # [Dev-C] TIER 4: 스크립트 개인화
+│   │   │   └── visualization.py       # [Dev-C] TIER 2/비동기: 커버 이미지
+│   │   │
+│   │   └── shared/              # 공용 에이전트 유틸리티
+│   │       ├── __init__.py
+│   │       ├── base_agent.py    # 에이전트 기본 클래스
+│   │       ├── llm_client.py    # Anthropic API 클라이언트
+│   │       └── message_router.py # 메시지 라우팅 유틸리티
 │   │
-│   ├── utils/               # 유틸리티 함수
+│   ├── api/                     # 백엔드 API 통신 (Protected - 3인 합의 필수)
 │   │   ├── __init__.py
-│   │   ├── logger.py        # 로깅
-│   │   ├── rate_limiter.py  # 속도 제한
-│   │   ├── token_counter.py # 토큰 계산
-│   │   ├── cache.py         # 캐싱
-│   │   └── utils.py         # 기타 유틸
+│   │   ├── client.py            # HTTP 클라이언트 (재시도, 타임아웃)
+│   │   └── contracts.py         # 요청/응답 스키마 정의
 │   │
-│   ├── handlers/            # 에러 핸들링
+│   ├── graph/                   # LangGraph 워크플로우 (Protected - 3인 합의 필수)
 │   │   ├── __init__.py
-│   │   └── error_handler.py # 에러 처리
+│   │   ├── workflow.py          # 메인 StateGraph 정의
+│   │   ├── conversation.py      # 대화모드 서브그래프
+│   │   └── podcast.py           # 팟캐스트모드 서브그래프
 │   │
-│   ├── api/                 # API 엔드포인트 (개발 예정)
-│   ├── models/              # AI 모델 관련 (개발 예정)
-│   └── prompts/             # 프롬프트 관리 (개발 예정)
+│   └── utils/                   # 공통 유틸리티
+│       ├── __init__.py
+│       ├── logger.py            # 로깅 설정
+│       ├── cache.py             # 캐시 유틸리티
+│       └── retry.py             # 재시도 유틸리티
 │
-├── data/                     # 데이터 디렉토리
-│   ├── README.md            # 데이터 가이드
-│   ├── cache/               # API 응답 캐시
-│   ├── prompts/             # 프롬프트 데이터
-│   ├── outputs/             # 생성 결과물
-│   └── embeddings/          # 임베딩 데이터
+├── config/                      # 환경 설정
+│   └── settings.yaml            # 모델, 타임아웃, 기능 플래그 설정
 │
-├── examples/                 # 사용 예시
-│   ├── README.md            # 예시 가이드
-│   ├── basic_completion.py  # 기본 완성
-│   ├── chat_session.py      # 채팅 세션
-│   └── chain_prompts.py     # 체인 프롬프트
+├── tests/                       # 테스트 코드
+│   ├── __init__.py
+│   ├── agents/
+│   │   ├── conversation/        # 대화모드 에이전트 단위 테스트
+│   │   └── podcast/             # 팟캐스트모드 에이전트 단위 테스트
+│   └── integration/             # 통합 테스트 (에이전트 간 연동)
 │
-├── notebooks/                # Jupyter 노트북
-│   └── README.md            # 노트북 가이드
+├── docs/                        # 프로젝트 문서
+│   ├── PROJECT_STRUCTURE.md     # 이 파일
+│   ├── GIT_WORKFLOW.md          # 브랜치/커밋/PR 가이드
+│   └── QUICK_START.md           # 환경 설정 및 빠른 시작
 │
-├── tests/                    # 테스트 코드
-│   ├── README.md            # 테스트 가이드
-│   └── __init__.py
+├── .github/
+│   ├── workflows/ci.yml         # CI/CD 파이프라인
+│   ├── pull_request_template.md # PR 템플릿
+│   └── ISSUE_TEMPLATE/          # 이슈 템플릿
 │
-├── scripts/                  # 실행 스크립트
-│   └── README.md            # 스크립트 가이드
-│
-└── docs/                     # 추가 문서
-    └── README.md            # 문서 가이드
+└── _deprecated/                 # 삭제 예정 파일 보관 (확인 후 삭제)
 ```
 
-## 🎯 주요 컴포넌트 설명
+---
 
-### 1. LLM 클라이언트 (`src/llm/`)
-다양한 LLM 제공자와의 통합을 담당합니다.
+## 핵심 디렉토리 설명
 
-**주요 파일:**
-- `base.py`: 모든 LLM 클라이언트의 기본 인터페이스
-- `claude_client.py`: Anthropic Claude 통합
-- `gpt_client.py`: OpenAI GPT 통합
+### src/models/ — 공유 데이터 모델
 
-**사용 예시:**
-```python
-from src.llm.gpt_client import GPTClient
-client = GPTClient(config)
-response = client.chat(messages)
-```
+모든 에이전트가 사용하는 공통 스키마를 정의합니다. 3명의 개발자 모두에게 영향을 미치므로 **수정 시 전원 리뷰가 필수**입니다.
 
-### 2. 프롬프트 엔지니어링 (`src/prompt_engineering/`)
-효과적인 프롬프트 관리 및 최적화를 위한 도구입니다.
+- `agent_state.py`: LangGraph에서 사용하는 AgentState TypedDict. 각 에이전트의 입출력 필드를 정의.
+- `message.py`: 에이전트 간 직접 통신에 사용하는 AgentMessage 포맷.
 
-**주요 파일:**
-- `templates.py`: YAML 파일에서 프롬프트 템플릿 로드
-- `few_shot.py`: Few-shot 학습 예시 관리
-- `chainer.py`: 순차적 프롬프트 체인 실행
+### src/agents/ — 에이전트 구현
 
-**사용 예시:**
-```python
-from src.prompt_engineering.templates import PromptTemplate
-template = PromptTemplate()
-system_prompt = template.get_system_prompt("counselor")
-```
+에이전트는 모드별로 분리되어 있으며, 각 파일은 하나의 에이전트 노드를 구현합니다. 모든 에이전트 노드는 동일한 시그니처를 따릅니다: `async def {name}_node(state: AgentState) -> AgentState`
 
-### 3. 유틸리티 (`src/utils/`)
-공통적으로 사용되는 헬퍼 함수들입니다.
+### src/api/ — 백엔드 API 통신
 
-**주요 기능:**
-- 로깅 설정 및 관리
-- API 호출 속도 제한
-- 토큰 수 계산
-- 응답 캐싱
-- 기타 유틸리티 함수
+백엔드 서버와의 통신을 담당합니다. 모든 HTTP 호출은 이 모듈을 통해서만 수행합니다.
 
-### 4. 설정 파일 (`config/`)
-프로젝트의 모든 설정을 중앙 관리합니다.
+### src/graph/ — LangGraph 워크플로우
 
-**파일 구성:**
-- `model_config.yaml`: AI 모델 파라미터
-- `prompt_templates.yaml`: 프롬프트 템플릿
-- `logging_config.yaml`: 로깅 설정
+에이전트 노드들을 연결하는 StateGraph를 정의합니다. 대화모드와 팟캐스트모드는 각각 별도의 서브그래프를 가지며, workflow.py에서 통합합니다.
 
-### 5. 데이터 관리 (`data/`)
-프로젝트에서 생성되고 사용되는 모든 데이터를 저장합니다.
+---
 
-**디렉토리 구성:**
-- `cache/`: API 응답 캐시 (비용 절감)
-- `prompts/`: 실험용 프롬프트 데이터
-- `outputs/`: AI 생성 결과물
-- `embeddings/`: 텍스트 임베딩
+## 파일 소유권 규칙
 
-## 🔄 워크플로우
+| 표시 | 의미 |
+|------|------|
+| [Dev-A] | 분석 도메인 개발자가 소유 |
+| [Dev-B] | 추론/생성 도메인 개발자가 소유 |
+| [Dev-C] | 검증/부가 도메인 개발자가 소유 |
+| Protected | 3인 합의 후에만 수정 가능 |
 
-### 기본 대화 워크플로우
-```
-사용자 입력 
-    ↓
-프롬프트 템플릿 로드 (prompt_engineering)
-    ↓
-LLM 클라이언트 호출 (llm)
-    ↓
-응답 생성 및 캐싱 (utils)
-    ↓
-에러 핸들링 (handlers)
-    ↓
-결과 반환
-```
+---
 
-### 개발 워크플로우
-```
-1. 프롬프트 실험 (notebooks/)
-2. 코드 작성 (src/)
-3. 예시 작성 (examples/)
-4. 테스트 작성 (tests/)
-5. 문서 업데이트 (docs/)
-```
-
-## 📝 코딩 컨벤션
-
-### 파일 명명
-- Python 파일: `snake_case.py`
-- 클래스: `PascalCase`
-- 함수/변수: `snake_case`
-- 상수: `UPPER_CASE`
-
-### 디렉토리 명명
-- 소문자 사용
-- 언더스코어로 단어 구분
-- 복수형 사용 (예: `utils`, `examples`)
-
-### Import 순서
-```python
-# 1. 표준 라이브러리
-import os
-import sys
-
-# 2. 서드파티 라이브러리
-import yaml
-import openai
-
-# 3. 로컬 모듈
-from src.llm.base import BaseLLMClient
-from src.utils.logger import get_logger
-```
-
-## 🚀 시작 체크리스트
-
-- [ ] Python 3.8+ 설치 확인
-- [ ] 가상환경 생성 및 활성화
-- [ ] `pip install -r requirements.txt` 실행
-- [ ] `.env.example`을 복사하여 `.env` 생성
-- [ ] API 키 설정
-- [ ] `examples/basic_completion.py` 실행 테스트
-- [ ] 프로젝트 구조 이해
-
-## 📚 다음 단계
-
-1. **예시 실행**: `examples/` 디렉토리의 예시들을 실행해보세요
-2. **노트북 탐색**: `notebooks/`에서 프롬프트 실험을 시작하세요
-3. **문서 읽기**: 각 디렉토리의 `README.md`를 확인하세요
-4. **기여하기**: 새로운 기능을 추가하거나 개선하세요
-
-## 💡 팁
-
-- 개발 시작 전에 항상 최신 코드를 pull 받으세요
-- 새로운 기능은 feature 브랜치에서 개발하세요
-- 커밋 전에 테스트를 실행하세요
-- 코드 리뷰를 요청하세요
-
-## 🔗 유용한 링크
-
-- [OpenAI API Documentation](https://platform.openai.com/docs)
-- [Anthropic Claude Documentation](https://docs.anthropic.com)
-- [FastAPI Documentation](https://fastapi.tiangolo.com)
-- [Pytest Documentation](https://docs.pytest.org)
+*참고: 에이전트 상세 설계는 ProjectDocs/ 폴더의 개별 에이전트 문서를 참조하세요.*

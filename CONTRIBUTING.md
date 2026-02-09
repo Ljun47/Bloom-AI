@@ -1,0 +1,106 @@
+# 기여 가이드
+
+Mind-Log 프로젝트에 기여하기 위한 가이드입니다.
+
+---
+
+## 팀 내부 개발자
+
+### 도메인 규칙
+
+각 개발자는 자기 도메인의 에이전트만 구현하며, 다른 도메인 코드를 직접 수정하지 않습니다.
+
+| 개발자 | 도메인 | 담당 파일 경로 |
+|--------|--------|---------------|
+| Dev-A | 분석 | `src/agents/conversation/{intent_classifier,emotion,context}.py`, `src/agents/podcast/content_analyzer.py` |
+| Dev-B | 추론/생성 | `src/agents/conversation/{memory,knowledge,reasoning,synthesis}.py`, `src/agents/podcast/{episode_memory,podcast_reasoning,script_generator}.py` |
+| Dev-C | 검증/부가 | `src/agents/conversation/{safety,validator,personalization,visualization,telemetry,learning}.py`, `src/agents/podcast/{batch_validator,script_personalizer,visualization}.py` |
+
+### Protected Files
+
+아래 파일은 3명 전원 합의 후에만 수정할 수 있습니다:
+
+- `src/models/agent_state.py`
+- `src/models/message.py`
+- `src/api/contracts.py`
+- `src/graph/workflow.py`
+
+### PR 리뷰 규칙
+
+- `feature/* → develop`: 다른 도메인 개발자 최소 1명 리뷰
+- `develop → main`: 3명 전원 승인
+- Protected Files 포함 PR: 3명 전원 승인
+
+---
+
+## 코드 스타일
+
+- **Python 3.11+**, 타입 힌팅 필수
+- **포맷터**: `black .` (자동 포매팅)
+- **린터**: `ruff check .` + `mypy src/`
+- **정렬**: `isort .` (import 정렬)
+
+### 네이밍 규칙
+
+| 대상 | 규칙 | 예시 |
+|------|------|------|
+| 에이전트 클래스 | PascalCase | `EmotionAgent` |
+| 노드 함수 | snake_case + `_node` | `emotion_node` |
+| AgentState 필드 | snake_case | `emotion_vectors` |
+| 테스트 파일 | `test_` + 에이전트명 | `test_emotion.py` |
+
+### 에이전트 노드 시그니처
+
+모든 에이전트는 이 시그니처를 따릅니다:
+
+```python
+async def {name}_node(state: AgentState) -> AgentState:
+    # 자기 담당 필드만 읽고 쓰기
+    return state
+```
+
+---
+
+## 커밋 컨벤션
+
+```
+<type>(<scope>): <description>
+```
+
+타입: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`
+
+상세 스코프 목록은 `docs/GIT_WORKFLOW.md`를 참조하세요.
+
+---
+
+## 테스트 요구사항
+
+- 모든 에이전트는 단위 테스트 필수
+- 테스트 파일 위치: `tests/agents/{conversation,podcast}/test_{agent_name}.py`
+- PR 제출 전 `pytest tests/ -v` 통과 확인
+
+---
+
+## 외부 기여자
+
+외부 기여는 Fork & PR 방식으로 진행합니다.
+
+```bash
+# 1. Fork 후 클론
+git clone https://github.com/your-username/mind-log.git
+cd mind-log
+
+# 2. upstream 등록
+git remote add upstream https://github.com/your-org/mind-log.git
+
+# 3. 기능 브랜치 생성
+git checkout -b feature/your-feature
+
+# 4. 작업 후 PR 제출
+git push origin feature/your-feature
+# GitHub에서 upstream의 develop 브랜치로 PR 생성
+```
+
+---
+
+*상세 브랜치 전략은 docs/GIT_WORKFLOW.md, 아키텍처 규칙은 CLAUDE.md를 참조하세요.*
