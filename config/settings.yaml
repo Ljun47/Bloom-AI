@@ -1,0 +1,100 @@
+# Mind-Log 설정 파일
+# 에이전트별 모델, 타임아웃, 기능 플래그를 정의한다.
+# 환경변수(.env)로 개별 값을 오버라이드할 수 있다.
+
+app:
+  name: mind-log
+  version: "0.1.0"
+
+# LLM 모델 설정
+# API 모델은 변경될 수 있으므로 하드코딩하지 않고 여기서 관리한다.
+llm:
+  provider: anthropic
+  models:
+    haiku: "claude-haiku-4-5-20251001"
+    sonnet: "claude-sonnet-4-5-20250929"
+    opus: "claude-opus-4-6"
+  default_max_tokens: 4096
+  temperature:
+    default: 0.7
+    safety: 0.1       # 안전 분석은 낮은 temperature
+    reasoning: 0.3    # 추론은 약간 낮은 temperature
+
+# 에이전트별 설정 (팟캐스트 모드)
+agents:
+  # TIER 0
+  intent_classifier:
+    model: haiku
+    max_tokens: 1024
+    temperature: 0.3
+
+  # TIER 1
+  safety:
+    model: sonnet
+    max_tokens: 2048
+    temperature: 0.1
+    crisis_threshold: 3  # risk_level >= 3 이면 CRISIS
+  emotion:
+    model: sonnet
+    max_tokens: 2048
+  content_analyzer:
+    model: sonnet
+    max_tokens: 2048
+  podcast_reasoning:
+    model: sonnet
+    max_tokens: 4096
+    temperature: 0.3
+
+  # TIER 1 독립 에이전트
+  episode_memory:
+    model: sonnet
+    max_tokens: 2048
+  knowledge:
+    model: sonnet
+    max_tokens: 2048
+
+  # TIER 2
+  script_generator:
+    model: sonnet
+    max_tokens: 4096
+  visualization_podcast:
+    model: sonnet
+    max_tokens: 2048
+
+  # TIER 3
+  batch_validator:
+    model: sonnet
+    max_tokens: 2048
+
+  # TIER 4
+  script_personalizer:
+    model: sonnet
+    max_tokens: 4096
+
+  # 비동기
+  telemetry:
+    model: haiku
+    max_tokens: 1024
+  learning:
+    model: haiku
+    max_tokens: 1024
+
+# 파이프라인 설정
+pipeline:
+  max_retries: 2              # TIER 3 → TIER 2 재시도 상한
+  tier1_timeout_seconds: 15   # TIER 1 병렬 작업 타임아웃
+  tier2_timeout_seconds: 20   # TIER 2 생성 작업 타임아웃
+  async_timeout_seconds: 30   # 비동기 작업 타임아웃
+
+# 백엔드 API 설정
+api:
+  timeout: 5                  # 기본 타임아웃 (초)
+  llm_timeout: 30             # LLM 관련 타임아웃 (초)
+  max_retries: 3              # 최대 재시도 횟수
+
+# 기능 플래그
+features:
+  podcast_mode: true
+  visualization: true
+  telemetry: true
+  learning: true
