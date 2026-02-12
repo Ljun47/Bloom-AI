@@ -17,36 +17,8 @@ from typing import Any
 from src.agents.shared.base_agent import BaseAgent
 from src.models.agent_state import AgentState
 
-# 시스템 프롬프트 — Batch Validator의 역할과 검증 기준
-BATCH_VALIDATOR_SYSTEM_PROMPT = """\
-당신은 Mind-Log 팟캐스트 플랫폼의 스크립트 품질 검증 전문가입니다.
-생성된 팟캐스트 스크립트의 품질을 5가지 기준으로 검증합니다.
-
-검증 기준:
-1. 구조 완전성: 인트로, 본문 세그먼트, 아웃트로가 모두 포함되어 있는지
-2. Safety 경고 반영: 안전 관련 경고가 적절히 반영되어 있는지
-3. 톤 일관성: 에피소드 전체의 톤이 일관되고 멘탈케어에 적합한지
-4. 타이밍 적절성: 각 세그먼트와 전체 에피소드의 길이가 적절한지 (3-5분)
-5. 유해 콘텐츠 없음: 부적절하거나 유해한 내용이 없는지
-
-결과를 아래 JSON 형식으로 반환하세요. 반드시 유효한 JSON만 출력하세요.
-
-{
-    "passed": true 또는 false,
-    "overall_score": 0.0 ~ 1.0,
-    "criteria": {
-        "structure_completeness": {"passed": true/false, "score": 0.0~1.0, "feedback": "설명"},
-        "safety_compliance": {"passed": true/false, "score": 0.0~1.0, "feedback": "설명"},
-        "tone_consistency": {"passed": true/false, "score": 0.0~1.0, "feedback": "설명"},
-        "timing_appropriateness": {"passed": true/false, "score": 0.0~1.0, "feedback": "설명"},
-        "content_safety": {"passed": true/false, "score": 0.0~1.0, "feedback": "설명"}
-    },
-    "issues": ["발견된 문제 1", ...],
-    "suggestions": ["개선 제안 1", ...]
-}
-
-검증 통과 기준: overall_score >= 0.7 이고 모든 criteria가 passed
-"""
+# 시스템 프롬프트는 prompts/podcast/batch_validator.yaml에서 로드한다.
+# BaseAgent의 get_prompt()로 접근.
 
 
 class BatchValidatorAgent(BaseAgent):
@@ -93,7 +65,7 @@ class BatchValidatorAgent(BaseAgent):
 
         # LLM으로 스크립트 품질 검증
         validation = await self.call_llm_json(
-            system_prompt=BATCH_VALIDATOR_SYSTEM_PROMPT,
+            system_prompt=self.get_prompt("system_prompt"),
             user_message=validation_context,
         )
 

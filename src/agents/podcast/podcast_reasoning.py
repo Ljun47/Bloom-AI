@@ -30,119 +30,8 @@ from src.models.agent_state import AgentState
 # 추론 깊이 타입 — complexity_score에 따라 결정
 ReasoningDepth = Literal["full", "standard", "minimal"]
 
-# === GoT (Graph of Thoughts) 시스템 프롬프트 ===
-# 사용자 입력에서 주제/개념/감정/경험 간 관계를 그래프로 구축한다.
-# depth="full" (complexity ≥ 0.8)일 때만 실행.
-GOT_SYSTEM_PROMPT = """\
-당신은 Mind-Log 팟캐스트 플랫폼의 개념 관계 분석 전문가입니다.
-사용자의 입력에서 주제, 개념, 감정, 경험 간의 관계를 그래프 구조로 분석합니다.
-
-결과를 아래 JSON 형식으로 반환하세요. 반드시 유효한 JSON만 출력하세요.
-
-{
-    "core_pattern": "입력에서 발견한 핵심 패턴 요약 (1-2문장)",
-    "nodes": [
-        {
-            "id": "node_1",
-            "type": "topic | concept | emotion | experience",
-            "label": "노드 이름",
-            "intensity": 0.0~1.0
-        }
-    ],
-    "edges": [
-        {
-            "from": "node_1",
-            "to": "node_2",
-            "relationship": "relates_to | influences | causes | contrasts | supports",
-            "weight": 0.0~1.0
-        }
-    ],
-    "insights": ["그래프에서 발견한 인사이트 1", "인사이트 2", ...]
-}
-
-분석 원칙:
-- 노드는 4-8개, 엣지는 3-10개 범위로 생성 (3-5분 에피소드 규모)
-- 멘탈케어 맥락에서 감정과 경험의 연결 관계를 중점적으로 분석
-- 노드 type은 반드시 topic, concept, emotion, experience 중 하나
-- 엣지 relationship은 반드시 relates_to, influences, causes, contrasts, supports 중 하나
-- intensity와 weight는 0.0~1.0 범위의 float 값
-"""
-
-# === ToT (Tree of Thoughts) 시스템 프롬프트 ===
-# 에피소드 구조 대안을 3-5개 생성하고 최적안을 선택한다.
-# depth="full" 또는 "standard" (complexity ≥ 0.5)일 때 실행.
-TOT_SYSTEM_PROMPT = """\
-당신은 Mind-Log 팟캐스트 플랫폼의 에피소드 구조 전략가입니다.
-주어진 정보를 바탕으로 3-5개의 에피소드 구조 대안을 생성하고,
-장단점을 평가하여 최적의 구조를 선택합니다.
-
-결과를 아래 JSON 형식으로 반환하세요. 반드시 유효한 JSON만 출력하세요.
-
-{
-    "alternatives": [
-        {
-            "id": 1,
-            "structure_summary": "구조 요약 (1-2문장)",
-            "segments": [
-                {
-                    "segment": "intro | body_1 | body_2 | ... | outro",
-                    "title": "세그먼트 제목",
-                    "duration_seconds": 60,
-                    "focus": "세그먼트 핵심 포커스"
-                }
-            ],
-            "strengths": ["강점 1", "강점 2"],
-            "weaknesses": ["약점 1"],
-            "score": 0.0~1.0
-        }
-    ],
-    "selected": 1,
-    "selection_rationale": "선택 이유 (2-3문장)"
-}
-
-평가 기준:
-- 청취자 몰입도: 감정 여정이 자연스럽고 몰입감 있는 구조인가
-- 멘탈케어 적합성: 따뜻하고 공감적인 톤을 유지할 수 있는 구조인가
-- 시간 효율성: 3-5분 안에 핵심 메시지를 효과적으로 전달할 수 있는가
-- 구조 완전성: 인트로-본문-아웃트로 흐름이 완성되었는가
-"""
-
-# === CoT (Chain of Thoughts) 시스템 프롬프트 ===
-# 선택된 구조를 단계적으로 상세화한다. 모든 depth에서 항상 실행.
-COT_SYSTEM_PROMPT = """\
-당신은 Mind-Log 팟캐스트 플랫폼의 에피소드 구조 설계 전문가입니다.
-주어진 정보를 바탕으로 팟캐스트 에피소드의 구조와 내러티브 흐름을 단계적으로 상세화합니다.
-
-결과를 아래 JSON 형식으로 반환하세요. 반드시 유효한 JSON만 출력하세요.
-
-{
-    "episode_structure": [
-        {
-            "segment": "intro | body_1 | body_2 | ... | outro",
-            "title": "세그먼트 제목",
-            "duration_seconds": 60,
-            "content_summary": "세그먼트 내용 요약",
-            "tone": "warm | informative | reflective | encouraging"
-        }
-    ],
-    "narrative_flow": "전체 내러티브 흐름 설명 (시작 → 전개 → 마무리)",
-    "key_points": ["핵심 포인트 1", "핵심 포인트 2", ...],
-    "emotional_journey": [
-        {
-            "phase": "opening | exploration | deepening | resolution | closing",
-            "target_emotion": "감정 목표",
-            "approach": "접근 방법"
-        }
-    ],
-    "confidence": 0.85
-}
-
-설계 원칙:
-- 청취자의 감정 상태를 고려한 점진적 감정 여정 설계
-- 멘탈케어 맥락에 맞는 따뜻하고 공감적인 내러티브
-- 각 세그먼트의 역할과 전환이 자연스럽도록 구성
-- 에피소드 총 길이는 3-5분 내외로 설계
-"""
+# GoT/ToT/CoT 시스템 프롬프트는 prompts/podcast/podcast_reasoning.yaml에서 로드한다.
+# BaseAgent의 get_prompt("got"), get_prompt("tot"), get_prompt("cot")로 접근.
 
 
 class PodcastReasoningAgent(BaseAgent):
@@ -355,7 +244,7 @@ class PodcastReasoningAgent(BaseAgent):
             knowledge_result=knowledge_result,
         )
         return await self.call_llm_json(
-            system_prompt=GOT_SYSTEM_PROMPT,
+            system_prompt=self.get_prompt("got"),
             user_message=context,
         )
 
@@ -383,7 +272,7 @@ class PodcastReasoningAgent(BaseAgent):
             knowledge_result=knowledge_result,
         )
         return await self.call_llm_json(
-            system_prompt=TOT_SYSTEM_PROMPT,
+            system_prompt=self.get_prompt("tot"),
             user_message=context,
         )
 
@@ -413,7 +302,7 @@ class PodcastReasoningAgent(BaseAgent):
             knowledge_result=knowledge_result,
         )
         return await self.call_llm_json(
-            system_prompt=COT_SYSTEM_PROMPT,
+            system_prompt=self.get_prompt("cot"),
             user_message=context,
         )
 

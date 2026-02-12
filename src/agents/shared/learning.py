@@ -22,35 +22,8 @@ from src.api.client import BackendClient
 from src.api.contracts import SaveRequest
 from src.models.agent_state import AgentState
 
-# 시스템 프롬프트 — Learning Agent의 역할과 출력 형식
-LEARNING_SYSTEM_PROMPT = """\
-당신은 Mind-Log 플랫폼의 사용자 패턴 학습 분석가입니다.
-이번 세션의 전체 처리 결과를 분석하여 사용자의 패턴을 요약합니다.
-
-분석 항목:
-1. 선호 주제: 사용자가 자주 다루는 주제 경향
-2. 감정 패턴: 감정 표현 방식과 빈도
-3. 콘텐츠 선호: 선호하는 에피소드 유형, 깊이, 구조
-4. 개선 포인트: 다음 세션에서 개선할 수 있는 점
-
-결과를 아래 JSON 형식으로 반환하세요. 반드시 유효한 JSON만 출력하세요.
-
-{
-    "preferred_topics": ["주제 1", "주제 2"],
-    "emotion_patterns": {
-        "dominant_emotion": "주요 감정",
-        "expression_style": "감정 표현 스타일 설명",
-        "trend": "stable | improving | declining"
-    },
-    "content_preferences": {
-        "preferred_type": "education | conversation | meditation | story | reflection",
-        "preferred_depth": "light | moderate | deep",
-        "preferred_tone": "warm | informative | reflective"
-    },
-    "session_summary": "이번 세션 요약 (1-2문장)",
-    "improvement_notes": ["개선 포인트 1", ...]
-}
-"""
+# 시스템 프롬프트는 prompts/shared/learning.yaml에서 로드한다.
+# BaseAgent의 get_prompt()로 접근.
 
 
 class LearningAgent(BaseAgent):
@@ -81,7 +54,7 @@ class LearningAgent(BaseAgent):
 
         # LLM으로 사용자 패턴 분석
         learning_data = await self.call_llm_json(
-            system_prompt=LEARNING_SYSTEM_PROMPT,
+            system_prompt=self.get_prompt("system_prompt"),
             user_message=learning_context,
         )
 

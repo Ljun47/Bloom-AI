@@ -92,6 +92,31 @@ api:
   llm_timeout: 30             # LLM 관련 타임아웃 (초)
   max_retries: 3              # 최대 재시도 횟수
 
+# 프롬프트 관리 설정
+# 환경변수 PROMPT_DIR로 오버라이드 가능 (환경 분리용)
+prompts:
+  base_dir: "prompts"  # 기본 프롬프트 디렉토리 (프로젝트 루트 기준)
+
+  # 에이전트별 프롬프트 버전 핀닝 (v8 멀티버전)
+  # 미지정 에이전트는 YAML 내부 default_version 사용
+  versions:
+    default: "1.0.0"              # 글로벌 기본 버전
+    # content_analyzer: "1.1.0"   # 에이전트별 오버라이드 예시
+    # podcast_reasoning: "1.0.0"
+    # batch_validator: "1.0.0"
+    # learning: "1.0.0"
+
+  # A/B 테스트 설정 (선택적)
+  # enabled: true로 활성화, false 또는 미설정이면 비활성
+  # assignment: "session" = 세션 단위 결정적 할당, "request" = 요청 단위 랜덤
+  # ab_tests:
+  #   content_analyzer:
+  #     enabled: false
+  #     variant_a: "1.0.0"
+  #     variant_b: "1.1.0"
+  #     traffic_split: 0.5
+  #     assignment: "session"
+
 # 기능 플래그
 features:
   podcast_mode: true

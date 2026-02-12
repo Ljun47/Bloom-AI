@@ -126,6 +126,76 @@ class Settings:
         """API 최대 재시도 횟수."""
         return int(self._config["api"]["max_retries"])
 
+    # --- 프롬프트 버전 관리 (v8) ---
+
+    def get_prompt_version(self, agent_name: str) -> str | None:
+        """
+        에이전트별 프롬프트 타겟 버전을 반환한다.
+
+        해석 우선순위:
+            1. prompts.versions.{agent_name} (에이전트별 핀닝)
+            2. prompts.versions.default (글로벌 기본값)
+            3. None (PromptLoader의 YAML 내부 default_version 사용)
+
+        Args:
+            agent_name: 에이전트 이름 (예: "content_analyzer")
+
+        Returns:
+            타겟 버전 문자열 또는 None
+        """
+        prompts_config = self._config.get("prompts", {})
+        versions_config = prompts_config.get("versions", {})
+
+        # 에이전트별 핀닝 확인
+        agent_version = versions_config.get(agent_name)
+        if agent_version is not None:
+            return str(agent_version)
+
+        # 글로벌 기본값 확인
+        default_version = versions_config.get("default")
+        if default_version is not None:
+            return str(default_version)
+
+        return None
+
+    def get_ab_test_config(self, agent_name: str) -> dict[str, Any] | None:
+        """
+        에이전트별 A/B 테스트 설정을 반환한다.
+
+        prompts.ab_tests.{agent_name}에서 enabled=true인 설정을 반환한다.
+        비활성이거나 설정이 없으면 None을 반환한다.
+
+        Args:
+            agent_name: 에이전트 이름
+
+        Returns:
+            A/B 테스트 설정 dict 또는 None
+
+        반환 형식 예시:
+            {
+                "enabled": True,
+                "variant_a": "1.0.0",
+                "variant_b": "1.1.0",
+                "traffic_split": 0.5,
+                "assignment": "session",
+            }
+        """
+        prompts_config = self._config.get("prompts", {})
+        ab_tests = prompts_config.get("ab_tests", {})
+
+        ab_config = ab_tests.get(agent_name)
+        if ab_config is None:
+            return None
+
+        if not isinstance(ab_config, dict):
+            return None
+
+        # enabled가 true인 경우만 반환
+        if not bool(ab_config.get("enabled", False)):
+            return None
+
+        return cast(dict[str, Any], ab_config)
+
     # --- 기능 플래그 ---
 
     def is_feature_enabled(self, feature_name: str) -> bool:
