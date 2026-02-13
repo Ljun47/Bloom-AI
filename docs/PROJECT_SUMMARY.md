@@ -95,7 +95,7 @@ Intent Classifier, Safety Agent, Emotion Agent, Knowledge Agent, Visualization A
 | LLM | Anthropic Claude (Opus 4.5, Sonnet 4, Haiku) | 외부 API 직접 호출 + AWS Bedrock 듀얼 지원 예정 |
 | LLM 호출 방식 | **듀얼**: 외부 API (Anthropic SDK) + AWS Bedrock | 섹션 3.1 참조 |
 | 오케스트레이션 | LangGraph StateGraph | |
-| 벡터 DB | Pinecone / pgvector | |
+| 벡터 DB | Pinecone | |
 | 관계형 DB | **MySQL** | ~~PostgreSQL~~ → MySQL 변경 |
 | 그래프 DB | Neo4j | |
 | 캐시 | Redis | |
