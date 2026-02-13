@@ -20,11 +20,11 @@ Mind-Log는 두 가지 모드를 지원하는 멀티에이전트 시스템입니
 ### TIER 기반 파이프라인
 
 ```
-TIER 0: Intent Classifier → 의도 분류
-TIER 1: Safety + Emotion + Context + Reasoning (병렬)
-TIER 2: Synthesis / Script Generator (순차)
-TIER 3: Validator / Batch Validator (검증)
-TIER 4: Personalization / Script Personalizer (최종)
+TIER 0: Intent Classifier → 의도 분류 + 모드 감지
+TIER 1 (병렬 Fan-out): Safety + Emotion + Context/ContentAnalyzer + Reasoning/PodcastReasoning
+TIER 2 (생성): Synthesis / Script Generator (+Visualization 병렬)
+TIER 3 (검증): Validator / Batch Validator (실패 시 TIER 2 재시도, 최대 2회)
+TIER 4 (후처리): Personalization / Script Personalizer
 비동기: Visualization + Telemetry + Learning
 ```
 
@@ -105,11 +105,12 @@ mind-log/
 
 ## 팀 구성
 
-| 개발자 | 도메인 | 담당 에이전트 |
-|--------|--------|-------------|
-| Dev-A | 분석 (Analysis) | Intent Classifier, Emotion, Context, Content Analyzer |
-| Dev-B | 추론/생성 (Reasoning) | Reasoning, Memory, Knowledge, Synthesis, Script Generator |
-| Dev-C | 검증/부가 (Validation) | Safety, Validator, Personalization, Visualization, Learning, Telemetry |
+| 개발자 | 대화모드 에이전트 | 팟캐스트모드 에이전트 |
+|--------|-----------------|---------------------|
+| 개발자1 | Intent Classifier, Knowledge, Synthesis, Personalization | Script Generator, Script Personalizer |
+| 개발자2 | Safety, Memory, Visualization, Emotion | Episode Memory, Visualization(Podcast) |
+| 개발자3 | Reasoning, Context, Validator, Learning | Podcast Reasoning, Content Analyzer, Batch Validator |
+| 미정 | Telemetry Agent | — (전체 에이전트 완료 후 예정) |
 
 ---
 
