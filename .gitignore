@@ -67,3 +67,6 @@ prompts/
 
 # Prompt Security (보안 대책 문서 — 외부 유출 방지)
 docs/PROMPT_SECURITY.md
+
+# 로컬 개발 전용 (Ollama 등 — 운영 배포 시 제외)
+dev/

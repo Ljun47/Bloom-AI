@@ -1,6 +1,6 @@
 # Mind-Log 프로젝트 종합 현황 보고서
 
-> 최종 업데이트: 2026-02-12 (v2 — 팀 역할·DB·LLM 호출방식·초반계획 차이점 반영)
+> 최종 업데이트: 2026-02-14 (v3 — v9~v13 반영: 멀티 프로바이더, pgvector 제거, Ollama, 인프라 보호, 라이브 테스트)
 
 ---
 
@@ -92,7 +92,7 @@ Intent Classifier, Safety Agent, Emotion Agent, Knowledge Agent, Visualization A
 
 | 구분 | 기술 | 비고 |
 |------|------|------|
-| LLM | Anthropic Claude (Opus 4.5, Sonnet 4, Haiku) | 외부 API 직접 호출 + AWS Bedrock 듀얼 지원 예정 |
+| LLM | Anthropic Claude (Opus 4.5, Sonnet 4, Haiku) | 외부 API 직접 호출 + AWS Bedrock 듀얼 지원 + Ollama 로컬 개발 |
 | LLM 호출 방식 | **듀얼**: 외부 API (Anthropic SDK) + AWS Bedrock | 섹션 3.1 참조 |
 | 오케스트레이션 | LangGraph StateGraph | |
 | 벡터 DB | Pinecone | |
@@ -135,12 +135,12 @@ Intent Classifier, Safety Agent, Emotion Agent, Knowledge Agent, Visualization A
 - 장점: AWS 생태계 통합, VPC 내부 호출, IAM 권한 관리, 비용 통합
 - 단점: AWS 의존성, 초기 설정 복잡
 
-#### 전환 설계 (예정)
+#### 전환 설계 (구현 완료)
 
 ```yaml
 # config/settings.yaml
 llm:
-  provider: "anthropic"        # "anthropic" | "bedrock"
+  provider: "anthropic"        # "anthropic" | "bedrock" | "custom"
   anthropic:
     api_key_env: "ANTHROPIC_API_KEY"
   bedrock:
@@ -153,13 +153,18 @@ llm:
 ```
 
 ```python
-# LLMClient에서 provider에 따라 분기
+# LLMClient에서 provider에 따라 분기 (커스텀 프로바이더 플러그인 지원)
 class LLMClient:
+    _custom_providers: dict[str, type] = {}  # 외부 프로바이더 레지스트리
+
     def __init__(self, provider: str, ...):
-        if provider == "anthropic":
-            self._client = anthropic.AsyncAnthropic(...)
+        if provider in self._custom_providers:
+            # 커스텀 프로바이더 (Ollama 등)
+            ...
         elif provider == "bedrock":
             self._client = boto3.client("bedrock-runtime", ...)
+        else:
+            self._client = anthropic.AsyncAnthropic(...)
 ```
 
 ---
@@ -204,7 +209,7 @@ class LLMClient:
 | 구성 요소 | 파일 | 설명 |
 |-----------|------|------|
 | BaseAgent | `src/agents/shared/base_agent.py` | ABC 패턴, LLM 자동 설정, 프롬프트 자동 로드, A/B 테스트 |
-| LLM 클라이언트 | `src/agents/shared/llm_client.py` | Anthropic Claude API 래퍼 (generate, generate_json) |
+| LLM 클라이언트 | `src/agents/shared/llm_client.py` | 멀티 프로바이더 LLM 클라이언트 (Anthropic + Bedrock + 커스텀) |
 | PromptLoader | `src/agents/shared/prompt_loader.py` | 5계층 보안 YAML 로더, 멀티버전 지원 |
 | Settings | `config/loader.py` | YAML 설정 + 환경변수, 버전/A/B 테스트 통제 |
 | AgentState | `src/models/agent_state.py` | TypedDict 공유 상태 (Protected) |
@@ -241,7 +246,6 @@ class LLMClient:
 | Intent Classifier | ⏳ 스텁 | 개발자1 | |
 | Knowledge Agent (실제) | ⏳ 스텁 | 개발자1 | 현재 스텁으로 빈 결과 반환 |
 | LangGraph Workflow | ⏳ 미구현 | 3인 합의 | `src/graph/workflow.py` |
-| AWS Bedrock LLM 클라이언트 | ⏳ 미구현 | — | 듀얼 호출 방식 (섹션 3.1) |
 | 대화모드 에이전트 13개 | ⏳ 보류 | 전원 | 팟캐스트 완료 후 착수 |
 
 ---
@@ -292,11 +296,39 @@ class LLMClient:
 - YAML 4개 전부 멀티버전 형식으로 마이그레이션
 - 테스트 112개 전체 통과 (기존 85 + 신규 27)
 
+### v9 — 문서 일관성 통합 + LLM 듀얼 프로바이더 아키텍처
+- LLMClient를 멀티 프로바이더 구조로 확장 (Anthropic SDK + AWS Bedrock)
+- `config/settings.yaml`에 프로바이더 전환 설정 추가
+- 프로젝트 문서 전체 일관성 검토 + 통합 업데이트
+- 테스트 149개 전체 통과
+
+### v10 — pgvector 제거 + MySQL 통일
+- pgvector (PostgreSQL 전용) 제거 → **Pinecone 단독** 벡터 DB
+- 프로젝트 문서에서 pgvector 참조 전부 삭제
+- 플랜 파일 DB 스키마 PostgreSQL → MySQL 문법 전환
+
+### v11 — Ollama 로컬 LLM 프로바이더 추가
+- `dev/` 폴더에 Ollama 프로바이더 격리 (`.gitignore` 자동 제외)
+- LLMClient에 `register_provider()` 플러그인 메서드 추가 (운영 코드 변경 최소)
+- `docs/OLLAMA_SETUP.md` 종합 설정 가이드 작성
+- 테스트 210개 전체 통과
+
+### v12 — 공용 인프라 보호 마킹
+- `[Shared Infrastructure]` 헤더를 공용 인프라 파일 4개에 추가
+- CLAUDE.md에 공용 인프라 보호 섹션 강화
+- 기존 public 메서드 시그니처/동작 변경 금지 규칙 명시
+
+### v13 — 개별 에이전트 라이브 LLM 테스트
+- `dev/live_tests/` 디렉토리에 멀티 프로바이더 라이브 테스트 추가
+- Ollama, Anthropic API, AWS Bedrock 3종 프로바이더 지원
+- CLI 러너: `--agent`, `--all`, `--pipeline`, `--provider` 옵션
+- `json.loads(strict=False)` 적용 — 로컬 LLM 제어 문자 허용
+
 ---
 
 ## 7. 테스트 현황
 
-### 전체 결과: 112 passed ✅
+### 전체 결과: 210 passed ✅
 
 | 테스트 파일 | 테스트 수 | 검증 대상 |
 |------------|----------|----------|
@@ -306,7 +338,8 @@ class LLMClient:
 | `test_learning.py` | 8 | 학습 패턴 추출, API 저장, 에러 핸들링 |
 | `test_prompt_loader.py` | 30 | YAML 로딩, 보안 (경로 순회, 크기 제한, 스키마), 캐시, BaseAgent 연동 |
 | `test_prompt_versioning.py` | 27 | 멀티버전 로드, 기본/폴백 버전, A/B 테스트, Settings 연동 |
-| **합계** | **112** | |
+| `test_llm_client.py` | 37 | LLM 멀티 프로바이더, JSON 파싱, register_provider, Bedrock |
+| **합계** | **210** | |
 
 ### 린트/타입 검사
 
@@ -315,7 +348,7 @@ class LLMClient:
 ✅ ruff check .           (린팅)
 ✅ isort . --check        (임포트 정렬)
 ✅ mypy src/ config/      (타입 체크)
-✅ pytest tests/ -v       (112 passed)
+✅ pytest tests/ -v       (210 passed)
 ```
 
 ---
@@ -344,7 +377,7 @@ mind-log/
 │   ├── agents/
 │   │   ├── shared/
 │   │   │   ├── base_agent.py          # BaseAgent ABC (v8 멀티버전 + A/B)
-│   │   │   ├── llm_client.py          # Anthropic Claude API 래퍼
+│   │   │   ├── llm_client.py          # 멀티 프로바이더 LLM 클라이언트 (Anthropic + Bedrock + 커스텀)
 │   │   │   ├── prompt_loader.py       # YAML 프롬프트 로더 (v7+v8)
 │   │   │   ├── learning.py            # Learning Agent
 │   │   │   └── stubs.py               # Episode Memory & Knowledge 스텁
@@ -357,7 +390,7 @@ mind-log/
 │   │   ├── client.py                  # BackendClient (httpx 비동기)
 │   │   └── contracts.py               # [Protected] SaveRequest/LoadResponse
 │   ├── graph/
-│   │   └── workflow.py                # [Protected] LangGraph 워크플로우 (스텁)
+│   │   └── __init__.py                # [Protected] LangGraph 워크플로우 (미구현 — 3인 합의 후 작성)
 │   └── utils/
 │       ├── logger.py                  # 구조화 로깅
 │       └── retry.py                   # 재시도 데코레이터
@@ -377,6 +410,7 @@ mind-log/
 │   │   │   ├── test_podcast_reasoning.py   # 28 tests
 │   │   │   └── test_batch_validator.py     # 11 tests
 │   │   ├── shared/
+│   │   │   ├── test_llm_client.py          # 37 tests
 │   │   │   ├── test_prompt_loader.py       # 30 tests
 │   │   │   └── test_prompt_versioning.py   # 27 tests
 │   │   └── conversation/                   # [보류]
@@ -385,13 +419,25 @@ mind-log/
 │
 ├── docs/
 │   ├── PROJECT_STRUCTURE.md           # 디렉토리 구조 상세
+│   ├── PROJECT_SUMMARY.md            # ← 본 문서
 │   ├── GIT_WORKFLOW.md                # 브랜치/커밋/PR 가이드
 │   ├── QUICK_START.md                 # 환경 설정 및 빠른 시작
+│   ├── OLLAMA_SETUP.md               # Ollama 로컬 LLM 설정 가이드
 │   ├── PROMPT_SECURITY.md             # 프롬프트 보안 문서 [.gitignore]
 │   ├── CHANGELOG_v1-v5.md            # v1~v5 변경이력
 │   ├── CHANGELOG_v6.md               # v6 변경이력
 │   ├── CHANGELOG_v7.md               # v7 변경이력
-│   └── PROJECT_SUMMARY.md            # ← 본 문서
+│   └── CHANGELOG_v9.md               # v9 변경이력
+│
+├── dev/                               # 로컬 개발 전용 (.gitignore — git push 제외)
+│   ├── ollama_provider.py             # Ollama OpenAI 호환 API 프로바이더
+│   ├── ollama_config.yaml             # Ollama 전용 설정
+│   ├── ollama_bootstrap.py            # LLMClient에 Ollama 프로바이더 등록
+│   ├── test_ollama.py                 # Ollama 프로바이더 단위 테스트
+│   ├── README.md                      # dev/ 빠른 시작 가이드
+│   └── live_tests/                    # 라이브 LLM 테스트 (멀티 프로바이더)
+│       ├── run_live.py                # CLI 러너 (--agent, --all, --pipeline, --provider)
+│       └── ...                        # 에이전트별 라이브 테스트 파일
 │
 └── .github/
     ├── workflows/ci.yml               # CI/CD 파이프라인
@@ -487,13 +533,15 @@ scope: intent, safety, emotion, context, memory, knowledge, reasoning,
 
 | 브랜치 | 기반 | 커밋 수 | 상태 |
 |--------|------|---------|------|
-| `feature/validation-podcast-agents` | develop | 2 | ✅ 활성 (원격 푸시 완료) |
+| `feature/validation-podcast-agents` | develop | 4 | ✅ 활성 (원격 푸시 완료) |
 | `develop` | main | 0 (동기화) | 기본 통합 브랜치 |
 | `main` | — | 2 | 프로덕션 |
 
 ### 커밋 이력 (feature/validation-podcast-agents)
 
 ```
+d345d71 docs: pgvector 제거 — Pinecone 단독 벡터 DB로 통일
+146fd28 feat: 문서 일관성 통합 + LLM 듀얼 프로바이더 아키텍처 (v9)
 6da2cdb feat: 프롬프트 외부화(v7) + 멀티버전/A/B 테스트(v8) 구현
 e0b9619 feat(podcast): 팟캐스트 모드 에이전트 구현 (Phase 0-4 + v6 CoT/ToT/GoT)
 e4267ee 커밋                          ← develop 분기점
@@ -546,7 +594,9 @@ GET /api/v1/{resource}?user_id={uuid}&type={type}&limit={n}
 | 9 | contextvars 사용 | LangGraph 병렬 실행에서 비동기 안전 격리 |
 | 10 | DI 패턴 (스텁) | Memory/Knowledge 미구현 상태에서도 파이프라인 테스트 가능 |
 | 11 | 관계형 DB → MySQL | PostgreSQL에서 MySQL로 변경 |
-| 12 | LLM 듀얼 호출 | 외부 API + AWS Bedrock 양쪽 지원으로 유연성 확보 |
+| 12 | LLM 트리플 프로바이더 | Anthropic SDK + AWS Bedrock + 커스텀(Ollama) 플러그인으로 유연성 확보 |
+| 13 | json.loads strict=False | 로컬 LLM(Ollama 등)의 제어 문자 포함 JSON 응답 허용 |
+| 14 | dev/ 폴더 격리 | 개발 전용 코드를 .gitignore로 분리, 운영 영향 0 |
 
 ---
 
@@ -558,8 +608,7 @@ GET /api/v1/{resource}?user_id={uuid}&type={type}&limit={n}
 2. **Script Personalizer** 구현 (개발자1) — TIER 4 톤/스타일 조정
 3. **Episode Memory** 실제 구현 (개발자2) — 스텁 교체
 4. **Knowledge Agent** 실제 구현 (개발자1) — 스텁 교체
-5. **AWS Bedrock LLM 클라이언트** 구현 — 듀얼 호출 방식 (섹션 3.1)
-6. **LangGraph Workflow** 통합 (3인 합의) — 전체 파이프라인 연결
+5. **LangGraph Workflow** 통합 (3인 합의) — 전체 파이프라인 연결
 
 ### 중기 (대화모드 착수)
 
@@ -611,7 +660,7 @@ GET /api/v1/{resource}?user_id={uuid}&type={type}&limit={n}
 | 항목 | 초반 계획 | 현재 |
 |------|----------|------|
 | 관계형 DB | PostgreSQL | **MySQL** |
-| LLM 호출 | Anthropic SDK 직접 호출만 | **듀얼: Anthropic SDK + AWS Bedrock** (예정) |
+| LLM 호출 | Anthropic SDK 직접 호출만 | **트리플: Anthropic SDK + AWS Bedrock + 커스텀(Ollama)** (구현 완료) |
 
 ### 14.3 v7/v8 — 초반 계획에 없던 신규 시스템
 

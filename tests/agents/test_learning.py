@@ -247,3 +247,199 @@ class TestLearningNode:
             result = await learning_node(full_state)
 
         assert result == {}
+
+
+# === 엣지 케이스 테스트 ===
+
+
+class TestLearningAgentEdgeCases:
+    """Learning Agent 엣지 케이스 테스트."""
+
+    @pytest.mark.asyncio
+    async def test_llm_call_failure_propagates(
+        self,
+        agent: LearningAgent,
+        full_state: AgentState,
+    ) -> None:
+        """call_llm_json 예외 시 그대로 전파되는지 확인 (try/except 없음)."""
+        with (
+            patch.object(
+                agent,
+                "call_llm_json",
+                new_callable=AsyncMock,
+                side_effect=Exception("LLM 호출 실패"),
+            ),
+            patch.object(agent._api_client, "save", new_callable=AsyncMock),
+            pytest.raises(Exception, match="LLM 호출 실패"),
+        ):
+            await agent.process(full_state)
+
+    @pytest.mark.asyncio
+    async def test_empty_learning_data_from_llm(
+        self,
+        agent: LearningAgent,
+        full_state: AgentState,
+    ) -> None:
+        """LLM이 빈 dict를 반환해도 API 저장이 호출되고 빈 dict를 반환하는지 확인."""
+        mock_save = AsyncMock()
+        with (
+            patch.object(agent, "call_llm_json", new_callable=AsyncMock, return_value={}),
+            patch.object(agent._api_client, "save", mock_save),
+        ):
+            result = await agent.process(full_state)
+
+        # API 저장이 호출되어야 한다
+        mock_save.assert_called_once()
+        # 빈 dict를 반환해야 한다
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_api_timeout_does_not_raise(
+        self,
+        agent: LearningAgent,
+        full_state: AgentState,
+        mock_learning_data: dict[str, Any],
+    ) -> None:
+        """API 저장 시 TimeoutError가 발생해도 예외가 전파되지 않는지 확인."""
+        with (
+            patch.object(
+                agent, "call_llm_json", new_callable=AsyncMock, return_value=mock_learning_data
+            ),
+            patch.object(
+                agent._api_client,
+                "save",
+                new_callable=AsyncMock,
+                side_effect=TimeoutError("API 타임아웃"),
+            ),
+        ):
+            # _save_learning_result의 try/except가 TimeoutError를 잡아야 한다
+            result = await agent.process(full_state)
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_api_connection_error_does_not_raise(
+        self,
+        agent: LearningAgent,
+        full_state: AgentState,
+        mock_learning_data: dict[str, Any],
+    ) -> None:
+        """API 저장 시 ConnectionError가 발생해도 예외가 전파되지 않는지 확인."""
+        with (
+            patch.object(
+                agent, "call_llm_json", new_callable=AsyncMock, return_value=mock_learning_data
+            ),
+            patch.object(
+                agent._api_client,
+                "save",
+                new_callable=AsyncMock,
+                side_effect=ConnectionError("연결 실패"),
+            ),
+        ):
+            # _save_learning_result의 try/except가 ConnectionError를 잡아야 한다
+            result = await agent.process(full_state)
+
+        assert result == {}
+
+    def test_build_context_with_only_user_input(
+        self,
+        agent: LearningAgent,
+    ) -> None:
+        """user_input만 있는 상태에서 [사용자 입력] 섹션만 포함되는지 확인."""
+        state = AgentState(
+            user_input="오늘 기분이 좋아요",
+            user_id="u1",
+            session_id="s1",
+            mode="podcast",
+        )
+        context = agent._build_learning_context(state)
+
+        # [사용자 입력] 섹션만 포함되어야 한다
+        assert "[사용자 입력]" in context
+        assert "오늘 기분이 좋아요" in context
+        # 다른 섹션은 포함되지 않아야 한다
+        assert "[감정 분석]" not in context
+        assert "[콘텐츠 분석]" not in context
+        assert "[최종 출력 (요약)]" not in context
+
+    def test_build_context_with_empty_emotion_vectors(
+        self,
+        agent: LearningAgent,
+    ) -> None:
+        """emotion_vectors가 빈 dict일 때 [감정 분석] 섹션이 포함되지 않는지 확인."""
+        state = AgentState(
+            user_input="테스트 입력",
+            user_id="u1",
+            session_id="s1",
+            mode="podcast",
+            emotion_vectors={},
+        )
+        context = agent._build_learning_context(state)
+
+        # 빈 dict는 falsy이므로 [감정 분석] 섹션이 빠져야 한다
+        assert "[사용자 입력]" in context
+        assert "[감정 분석]" not in context
+
+    @pytest.mark.asyncio
+    async def test_save_learning_result_passes_correct_resource(
+        self,
+        agent: LearningAgent,
+        full_state: AgentState,
+        mock_learning_data: dict[str, Any],
+    ) -> None:
+        """save() 호출 시 'learning' 리소스와 올바른 SaveRequest 필드가 전달되는지 확인."""
+        mock_save = AsyncMock()
+        with (
+            patch.object(
+                agent, "call_llm_json", new_callable=AsyncMock, return_value=mock_learning_data
+            ),
+            patch.object(agent._api_client, "save", mock_save),
+        ):
+            await agent.process(full_state)
+
+        mock_save.assert_called_once()
+        call_args = mock_save.call_args
+
+        # 첫 번째 인자: 리소스 이름
+        resource = call_args.args[0]
+        assert resource == "learning"
+
+        # 두 번째 인자: SaveRequest 객체
+        save_request = call_args.args[1]
+        assert save_request.user_id == "test_user_001"
+        assert save_request.session_id == "sess_test_001"
+        assert save_request.type == "learning"
+        assert save_request.data["mode"] == "podcast"
+        assert save_request.data["learning_data"] == mock_learning_data
+        assert save_request.timestamp is not None
+
+    @pytest.mark.asyncio
+    async def test_process_with_conversation_mode(
+        self,
+        agent: LearningAgent,
+        mock_learning_data: dict[str, Any],
+    ) -> None:
+        """mode='conversation'에서도 정상 동작하는지 확인 (모드 무관)."""
+        conversation_state = AgentState(
+            user_input="오늘 정말 힘든 하루였어요.",
+            user_id="conv_user_001",
+            session_id="sess_conv_001",
+            mode="conversation",
+            emotion_vectors={"primary_emotion": "tired", "intensity": 0.6},
+            final_output="힘든 하루를 보내셨군요. 충분히 쉬시길 바랍니다.",
+        )
+        mock_save = AsyncMock()
+        with (
+            patch.object(
+                agent, "call_llm_json", new_callable=AsyncMock, return_value=mock_learning_data
+            ),
+            patch.object(agent._api_client, "save", mock_save),
+        ):
+            result = await agent.process(conversation_state)
+
+        # 빈 dict를 반환해야 한다
+        assert result == {}
+
+        # API 저장 시 mode가 "conversation"으로 전달되어야 한다
+        save_request = mock_save.call_args.args[1]
+        assert save_request.data["mode"] == "conversation"

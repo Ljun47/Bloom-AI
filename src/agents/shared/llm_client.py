@@ -1,8 +1,14 @@
 """
-LLM 클라이언트 — 듀얼 프로바이더 (Anthropic 직접 API + AWS Bedrock) 래퍼.
+LLM 클라이언트 — 멀티 프로바이더 (Anthropic + AWS Bedrock + 커스텀) 래퍼.
+
+[Shared Infrastructure — 인터페이스 변경 금지]
+기존 public 메서드(generate, generate_json, register_provider,
+unregister_provider)의 시그니처와 동작을 변경하지 마시오.
+신규 메서드 추가만 허용. 수정 시 전체 테스트(pytest tests/ -v) 통과 필수.
 
 모든 에이전트가 이 클라이언트를 통해 LLM을 호출한다.
 provider 설정에 따라 Anthropic SDK 직접 호출 또는 AWS Bedrock을 통해 호출한다.
+register_provider()를 통해 외부 프로바이더(예: Ollama)를 플러그인으로 추가할 수 있다.
 
 프로바이더 선택 우선순위:
     1. LLMClient 생성자의 provider_override 파라미터
@@ -26,15 +32,18 @@ from config.loader import get_settings
 
 class LLMClient:
     """
-    듀얼 프로바이더 LLM 비동기 클라이언트.
+    멀티 프로바이더 LLM 비동기 클라이언트.
 
-    Anthropic 직접 API와 AWS Bedrock을 동적으로 전환할 수 있다.
+    Anthropic 직접 API, AWS Bedrock, 커스텀 프로바이더를 동적으로 전환할 수 있다.
     에이전트별 모델과 파라미터를 설정에서 자동으로 가져온다.
+
+    커스텀 프로바이더는 register_provider()로 런타임에 등록한다.
+    dev/ 폴더의 부트스트랩 스크립트에서 Ollama 등 로컬 프로바이더를 등록하는 방식.
 
     Args:
         agent_name: 에이전트 이름 (설정에서 모델/토큰/temperature 조회용)
         model_override: 설정 대신 직접 모델 ID를 지정할 때 사용
-        provider_override: 설정 대신 직접 프로바이더를 지정 ("anthropic" | "bedrock")
+        provider_override: 설정 대신 직접 프로바이더를 지정 ("anthropic" | "bedrock" | 커스텀)
 
     사용 예시:
         # 기본 사용 (settings.yaml의 provider 따름)
@@ -48,6 +57,35 @@ class LLMClient:
         client = LLMClient(agent_name="content_analyzer", provider_override="bedrock")
     """
 
+    # 외부 프로바이더 레지스트리 — register_provider()로 등록 (로컬 개발 전용)
+    _custom_providers: dict[str, type] = {}
+
+    @classmethod
+    def register_provider(cls, name: str, provider_class: type) -> None:
+        """
+        외부 프로바이더를 등록한다 (로컬 개발 전용).
+
+        등록된 프로바이더는 provider_override 또는 LLM_PROVIDER 환경변수로 활성화한다.
+        dev/ 폴더의 부트스트랩 스크립트에서 호출하는 것을 권장한다.
+
+        Args:
+            name: 프로바이더 이름 (예: "ollama")
+            provider_class: generate() 메서드를 가진 클래스.
+                시그니처: async generate(system_prompt, user_message,
+                max_tokens, temperature) → str
+        """
+        cls._custom_providers[name] = provider_class
+
+    @classmethod
+    def unregister_provider(cls, name: str) -> None:
+        """
+        등록된 외부 프로바이더를 제거한다 (테스트 정리용).
+
+        Args:
+            name: 제거할 프로바이더 이름
+        """
+        cls._custom_providers.pop(name, None)
+
     def __init__(
         self,
         agent_name: str,
@@ -60,8 +98,14 @@ class LLMClient:
         # 프로바이더 결정 — override > 환경변수 > 설정 파일
         self._provider = provider_override or os.getenv("LLM_PROVIDER") or settings.llm_provider
 
+        # 커스텀 프로바이더 인스턴스 (등록된 경우에만 사용)
+        self._custom_provider_instance: Any = None
+
         # 프로바이더별 클라이언트 및 모델 ID 설정
-        if self._provider == "bedrock":
+        if self._provider in self._custom_providers:
+            # 커스텀 프로바이더 (로컬 개발용 — dev/ 에서 등록)
+            self._init_custom_provider(agent_config, model_override)
+        elif self._provider == "bedrock":
             self._init_bedrock_client(settings)
             # Bedrock 모델 ID 사용 (오버라이드가 없을 때)
             model_key = agent_config.get("model", "sonnet")
@@ -78,6 +122,26 @@ class LLMClient:
         # 공통 파라미터
         self._max_tokens: int = agent_config.get("max_tokens", 4096)
         self._temperature: float = agent_config.get("temperature", 0.7)
+
+    def _init_custom_provider(
+        self,
+        agent_config: dict[str, Any],
+        model_override: str | None,
+    ) -> None:
+        """
+        커스텀 프로바이더를 초기화한다 (로컬 개발 전용).
+
+        커스텀 프로바이더는 모델 매핑, base_url, timeout 등을
+        자체 설정 파일(예: dev/ollama_config.yaml)에서 관리한다.
+        """
+        provider_cls = self._custom_providers[self._provider]
+        model_key = agent_config.get("model", "sonnet")
+        # 모델 ID는 override가 있으면 사용, 없으면 모델 키를 그대로 전달
+        # (커스텀 프로바이더가 내부적으로 매핑)
+        self._model_id = model_override or model_key
+        self._custom_provider_instance = provider_cls(
+            model_id=self._model_id,
+        )
 
     def _init_bedrock_client(self, settings: Any) -> None:
         """
@@ -143,7 +207,13 @@ class LLMClient:
         actual_max_tokens = max_tokens or self._max_tokens
         actual_temperature = temperature or self._temperature
 
-        if self._provider == "bedrock":
+        if self._provider in self._custom_providers:
+            # 커스텀 프로바이더 디스패치 (로컬 개발용)
+            result: str = await self._custom_provider_instance.generate(
+                system_prompt, user_message, actual_max_tokens, actual_temperature
+            )
+            return result
+        elif self._provider == "bedrock":
             return await self._generate_bedrock(
                 system_prompt, user_message, actual_max_tokens, actual_temperature
             )
@@ -204,8 +274,8 @@ class LLMClient:
             accept="application/json",
         )
 
-        # 응답 파싱
-        response_body = json.loads(response["body"].read())
+        # 응답 파싱 (strict=False: 제어 문자 허용)
+        response_body = json.loads(response["body"].read(), strict=False)
         return str(response_body["content"][0]["text"])
 
     async def generate_json(
@@ -264,5 +334,7 @@ class LLMClient:
                 lines = lines[:-1]
             cleaned = "\n".join(lines).strip()
 
-        result: dict[str, Any] = json.loads(cleaned)
+        # strict=False: 로컬 LLM(Ollama 등)이 JSON 문자열 내에
+        # 제어 문자(줄바꿈, 탭 등)를 포함할 수 있으므로 허용한다.
+        result: dict[str, Any] = json.loads(cleaned, strict=False)
         return result

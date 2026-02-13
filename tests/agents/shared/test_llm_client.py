@@ -632,3 +632,257 @@ class TestLLMClientBoto3Missing:
                     agent_name="content_analyzer",
                     provider_override="bedrock",
                 )
+
+
+# ===================================================================
+# LLMClient — 커스텀 프로바이더 등록/해제 테스트
+# ===================================================================
+
+
+class TestLLMClientCustomProvider:
+    """register_provider / unregister_provider를 통한 커스텀 프로바이더 동작을 검증한다."""
+
+    def setup_method(self) -> None:
+        """각 테스트 전 커스텀 프로바이더 레지스트리를 초기화한다."""
+        from src.agents.shared.llm_client import LLMClient
+
+        # 테스트 간 간섭 방지 — 기존 등록 제거
+        LLMClient._custom_providers.clear()
+
+    def teardown_method(self) -> None:
+        """각 테스트 후 커스텀 프로바이더 레지스트리를 정리한다."""
+        from src.agents.shared.llm_client import LLMClient
+
+        LLMClient._custom_providers.clear()
+
+    def test_register_provider_adds_to_registry(self) -> None:
+        """register_provider()가 레지스트리에 프로바이더를 추가한다."""
+        from src.agents.shared.llm_client import LLMClient
+
+        mock_provider_cls = MagicMock()
+        LLMClient.register_provider("test_provider", mock_provider_cls)
+
+        assert "test_provider" in LLMClient._custom_providers
+        assert LLMClient._custom_providers["test_provider"] is mock_provider_cls
+
+    def test_unregister_provider_removes_from_registry(self) -> None:
+        """unregister_provider()가 레지스트리에서 프로바이더를 제거한다."""
+        from src.agents.shared.llm_client import LLMClient
+
+        mock_provider_cls = MagicMock()
+        LLMClient.register_provider("test_provider", mock_provider_cls)
+        assert "test_provider" in LLMClient._custom_providers
+
+        LLMClient.unregister_provider("test_provider")
+        assert "test_provider" not in LLMClient._custom_providers
+
+    def test_unregister_nonexistent_provider_does_not_raise(self) -> None:
+        """존재하지 않는 프로바이더를 해제해도 예외가 발생하지 않는다."""
+        from src.agents.shared.llm_client import LLMClient
+
+        # 예외 없이 실행되어야 한다
+        LLMClient.unregister_provider("nonexistent")
+
+    @patch("src.agents.shared.llm_client.get_settings")
+    def test_custom_provider_init_called(self, mock_settings: MagicMock) -> None:
+        """커스텀 프로바이더로 LLMClient 생성 시 프로바이더 __init__이 호출된다."""
+        settings = MagicMock()
+        settings.llm_provider = "anthropic"
+        settings.get_agent_config.return_value = {
+            "model": "sonnet",
+            "max_tokens": 2048,
+            "temperature": 0.7,
+        }
+        mock_settings.return_value = settings
+
+        # 커스텀 프로바이더 mock 등록
+        mock_provider_instance = MagicMock()
+        mock_provider_cls = MagicMock(return_value=mock_provider_instance)
+
+        from src.agents.shared.llm_client import LLMClient
+
+        LLMClient.register_provider("test_local", mock_provider_cls)
+
+        client = LLMClient(
+            agent_name="content_analyzer",
+            provider_override="test_local",
+        )
+
+        # 프로바이더 클래스가 model_id로 호출되었는지 확인
+        mock_provider_cls.assert_called_once_with(model_id="sonnet")
+        assert client.provider == "test_local"
+        assert client.model_id == "sonnet"
+
+    @patch("src.agents.shared.llm_client.get_settings")
+    def test_custom_provider_model_override(self, mock_settings: MagicMock) -> None:
+        """커스텀 프로바이더에서 model_override가 정상 동작한다."""
+        settings = MagicMock()
+        settings.llm_provider = "anthropic"
+        settings.get_agent_config.return_value = {
+            "model": "sonnet",
+            "max_tokens": 2048,
+            "temperature": 0.7,
+        }
+        mock_settings.return_value = settings
+
+        mock_provider_cls = MagicMock(return_value=MagicMock())
+
+        from src.agents.shared.llm_client import LLMClient
+
+        LLMClient.register_provider("test_local", mock_provider_cls)
+
+        client = LLMClient(
+            agent_name="content_analyzer",
+            provider_override="test_local",
+            model_override="custom-local-model",
+        )
+
+        mock_provider_cls.assert_called_once_with(model_id="custom-local-model")
+        assert client.model_id == "custom-local-model"
+
+    @patch("src.agents.shared.llm_client.get_settings")
+    async def test_custom_provider_generate_dispatches(self, mock_settings: MagicMock) -> None:
+        """generate()가 커스텀 프로바이더의 generate()를 호출한다."""
+        settings = MagicMock()
+        settings.llm_provider = "anthropic"
+        settings.get_agent_config.return_value = {
+            "model": "sonnet",
+            "max_tokens": 2048,
+            "temperature": 0.7,
+        }
+        mock_settings.return_value = settings
+
+        # 비동기 generate mock
+        mock_provider_instance = MagicMock()
+        mock_provider_instance.generate = AsyncMock(return_value="커스텀 응답")
+        mock_provider_cls = MagicMock(return_value=mock_provider_instance)
+
+        from src.agents.shared.llm_client import LLMClient
+
+        LLMClient.register_provider("test_local", mock_provider_cls)
+
+        client = LLMClient(
+            agent_name="content_analyzer",
+            provider_override="test_local",
+        )
+
+        result = await client.generate(
+            system_prompt="시스템 프롬프트",
+            user_message="사용자 메시지",
+        )
+
+        assert result == "커스텀 응답"
+        mock_provider_instance.generate.assert_called_once_with(
+            "시스템 프롬프트", "사용자 메시지", 2048, 0.7
+        )
+
+    @patch("src.agents.shared.llm_client.get_settings")
+    async def test_custom_provider_generate_json_dispatches(self, mock_settings: MagicMock) -> None:
+        """generate_json()이 커스텀 프로바이더를 통해 JSON 파싱까지 정상 동작한다."""
+        settings = MagicMock()
+        settings.llm_provider = "anthropic"
+        settings.get_agent_config.return_value = {
+            "model": "haiku",
+            "max_tokens": 1024,
+            "temperature": 0.3,
+        }
+        mock_settings.return_value = settings
+
+        json_response = '{"topic": "스트레스", "score": 0.8}'
+        mock_provider_instance = MagicMock()
+        mock_provider_instance.generate = AsyncMock(return_value=json_response)
+        mock_provider_cls = MagicMock(return_value=mock_provider_instance)
+
+        from src.agents.shared.llm_client import LLMClient
+
+        LLMClient.register_provider("test_local", mock_provider_cls)
+
+        client = LLMClient(
+            agent_name="content_analyzer",
+            provider_override="test_local",
+        )
+
+        result = await client.generate_json(
+            system_prompt="JSON으로 응답하라.",
+            user_message="테스트",
+        )
+
+        assert result == {"topic": "스트레스", "score": 0.8}
+
+    @patch("src.agents.shared.llm_client.get_settings")
+    def test_env_selects_custom_provider(self, mock_settings: MagicMock) -> None:
+        """LLM_PROVIDER 환경변수로 커스텀 프로바이더를 선택할 수 있다."""
+        settings = MagicMock()
+        settings.llm_provider = "anthropic"
+        settings.get_agent_config.return_value = {
+            "model": "sonnet",
+            "max_tokens": 2048,
+            "temperature": 0.7,
+        }
+        mock_settings.return_value = settings
+
+        mock_provider_cls = MagicMock(return_value=MagicMock())
+
+        from src.agents.shared.llm_client import LLMClient
+
+        LLMClient.register_provider("test_local", mock_provider_cls)
+
+        with patch.dict("os.environ", {"LLM_PROVIDER": "test_local"}):
+            client = LLMClient(agent_name="content_analyzer")
+            assert client.provider == "test_local"
+
+    @patch("src.agents.shared.llm_client.anthropic.AsyncAnthropic")
+    @patch("src.agents.shared.llm_client.get_settings")
+    def test_unregistered_provider_falls_through_to_anthropic(
+        self, mock_settings: MagicMock, mock_anthropic: MagicMock
+    ) -> None:
+        """등록되지 않은 프로바이더명은 기본 Anthropic으로 fallback한다."""
+        settings = MagicMock()
+        settings.llm_provider = "anthropic"
+        settings.get_agent_config.return_value = {
+            "model": "sonnet",
+            "model_id": "claude-sonnet-4-5-20250929",
+            "max_tokens": 2048,
+            "temperature": 0.7,
+        }
+        settings.get_model_id.return_value = "claude-sonnet-4-5-20250929"
+        mock_settings.return_value = settings
+
+        from src.agents.shared.llm_client import LLMClient
+
+        # 커스텀 프로바이더 미등록 상태에서 anthropic이 기본
+        client = LLMClient(agent_name="content_analyzer")
+        assert client.provider == "anthropic"
+
+    @patch("src.agents.shared.llm_client.get_settings")
+    async def test_custom_provider_error_propagates(self, mock_settings: MagicMock) -> None:
+        """커스텀 프로바이더의 generate() 예외가 그대로 전파된다."""
+        settings = MagicMock()
+        settings.llm_provider = "anthropic"
+        settings.get_agent_config.return_value = {
+            "model": "sonnet",
+            "max_tokens": 2048,
+            "temperature": 0.7,
+        }
+        mock_settings.return_value = settings
+
+        mock_provider_instance = MagicMock()
+        mock_provider_instance.generate = AsyncMock(
+            side_effect=ConnectionError("Ollama 서버 연결 실패")
+        )
+        mock_provider_cls = MagicMock(return_value=mock_provider_instance)
+
+        from src.agents.shared.llm_client import LLMClient
+
+        LLMClient.register_provider("test_local", mock_provider_cls)
+
+        client = LLMClient(
+            agent_name="content_analyzer",
+            provider_override="test_local",
+        )
+
+        with pytest.raises(ConnectionError, match="Ollama 서버 연결 실패"):
+            await client.generate(
+                system_prompt="시스템",
+                user_message="메시지",
+            )

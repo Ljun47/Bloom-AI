@@ -1,6 +1,12 @@
 """
 설정 로더 — YAML 파일과 환경변수를 통합 관리.
 
+[Shared Infrastructure — 인터페이스 변경 금지]
+기존 public 메서드/프로퍼티(get_settings, get_model_id, get_agent_config,
+get_prompt_version, get_ab_test_config, llm_provider 등)의
+시그니처와 동작을 변경하지 마시오.
+신규 메서드 추가만 허용. 수정 시 전체 테스트(pytest tests/ -v) 통과 필수.
+
 사용법:
     from config.loader import get_settings
     settings = get_settings()

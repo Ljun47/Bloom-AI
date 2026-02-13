@@ -827,3 +827,209 @@ class TestBackwardCompatibility:
         assert "tot_result" in reasoning
         assert "reasoning_depth" in reasoning
         assert "reasoning_strategy" in reasoning
+
+
+# === 엣지 케이스 테스트 ===
+
+
+class TestPodcastReasoningEdgeCases:
+    """Podcast Reasoning 에이전트 엣지 케이스 테스트.
+
+    경계값, 빈 입력, 누락된 필드, stub 예외 전파 등을 검증한다.
+    """
+
+    @pytest.mark.asyncio
+    async def test_empty_user_input(
+        self,
+        agent: PodcastReasoningAgent,
+        mock_cot_result: dict[str, Any],
+    ) -> None:
+        """빈 문자열 user_input으로도 process()가 정상 동작하는지 확인 (LLM이 처리)."""
+        state = AgentState(
+            user_input="",
+            user_id="test_user_001",
+            session_id="sess_test_001",
+            mode="podcast",
+            intent={"primary_intent": "unknown", "complexity_score": 0.3},
+        )
+        with patch.object(
+            agent, "call_llm_json", new_callable=AsyncMock, return_value=mock_cot_result
+        ):
+            result = await agent.process(state)
+
+        # 빈 입력이어도 reasoning_result 구조는 정상 반환
+        assert "reasoning_result" in result
+        assert result["reasoning_result"]["reasoning_depth"] == "minimal"
+        assert result["reasoning_result"]["reasoning_strategy"] == "CoT"
+
+    @pytest.mark.asyncio
+    async def test_missing_intent_field(
+        self,
+        agent: PodcastReasoningAgent,
+        mock_cot_result: dict[str, Any],
+    ) -> None:
+        """state에 intent 키가 아예 없을 때 기본값으로 처리되는지 확인."""
+        # AgentState는 total=False이므로 intent 키 생략 가능
+        state = AgentState(
+            user_input="테스트 입력",
+            user_id="test_user_001",
+            session_id="sess_test_001",
+            mode="podcast",
+        )
+        with patch.object(
+            agent, "call_llm_json", new_callable=AsyncMock, return_value=mock_cot_result
+        ):
+            result = await agent.process(state)
+
+        # intent 없으면 complexity 기본값 0.5 → "standard" depth
+        assert "reasoning_result" in result
+        assert result["reasoning_result"]["reasoning_depth"] == "standard"
+        assert result["reasoning_result"]["reasoning_strategy"] == "ToT+CoT"
+
+    @pytest.mark.asyncio
+    async def test_llm_returns_empty_dict(
+        self,
+        agent: PodcastReasoningAgent,
+        base_state: AgentState,
+    ) -> None:
+        """call_llm_json이 빈 dict를 반환해도 필수 메타데이터 필드가 존재하는지 확인."""
+        # CoT만 실행 (minimal depth) — LLM이 {} 반환
+        with patch.object(agent, "call_llm_json", new_callable=AsyncMock, return_value={}):
+            result = await agent.process(base_state)
+
+        reasoning = result["reasoning_result"]
+        # 메타데이터 필드는 파이프라인이 직접 설정하므로 반드시 존재
+        assert reasoning["reasoning_depth"] == "minimal"
+        assert reasoning["reasoning_strategy"] == "CoT"
+        # 콘텐츠 필드는 .get() 기본값으로 빈 리스트/빈 문자열/0.0
+        assert reasoning["episode_structure"] == []
+        assert reasoning["narrative_flow"] == ""
+        assert reasoning["key_points"] == []
+        assert reasoning["emotional_journey"] == []
+        assert reasoning["confidence"] == 0.0
+
+    def test_boundary_complexity_exactly_0_5(
+        self,
+        agent_with_stubs: PodcastReasoningAgent,
+    ) -> None:
+        """complexity=0.5 경계값이 'standard' depth를 반환하는지 확인."""
+        depth = agent_with_stubs._determine_reasoning_depth(0.5)
+        assert depth == "standard"
+
+    def test_boundary_complexity_exactly_0_8(
+        self,
+        agent_with_stubs: PodcastReasoningAgent,
+    ) -> None:
+        """complexity=0.8 경계값이 'full' depth를 반환하는지 확인."""
+        depth = agent_with_stubs._determine_reasoning_depth(0.8)
+        assert depth == "full"
+
+    def test_boundary_complexity_zero(
+        self,
+        agent_with_stubs: PodcastReasoningAgent,
+    ) -> None:
+        """complexity=0.0 최솟값이 'minimal' depth를 반환하는지 확인."""
+        depth = agent_with_stubs._determine_reasoning_depth(0.0)
+        assert depth == "minimal"
+
+    def test_boundary_complexity_one(
+        self,
+        agent_with_stubs: PodcastReasoningAgent,
+    ) -> None:
+        """complexity=1.0 최댓값이 'full' depth를 반환하는지 확인."""
+        depth = agent_with_stubs._determine_reasoning_depth(1.0)
+        assert depth == "full"
+
+    @pytest.mark.asyncio
+    async def test_memory_stub_exception_handling(
+        self,
+        mock_knowledge: AsyncMock,
+        mock_cot_result: dict[str, Any],
+    ) -> None:
+        """EpisodeMemoryStub.search()에서 예외 발생 시 예외가 전파되는지 확인.
+
+        _fetch_memory_if_needed에 try/except가 없으므로 예외가 그대로 전파된다.
+        """
+        # 예외를 발생시키는 모의 Episode Memory 생성
+        failing_memory = AsyncMock()
+        failing_memory.search.side_effect = Exception("메모리 검색 실패")
+
+        agent = PodcastReasoningAgent(
+            episode_memory=failing_memory,
+            knowledge_agent=mock_knowledge,
+        )
+
+        # complexity=0.7 → memory 호출 트리거 (>= 0.6)
+        state = AgentState(
+            user_input="테스트 입력",
+            user_id="test_user_001",
+            session_id="sess_test_001",
+            mode="podcast",
+            intent={"primary_intent": "test", "complexity_score": 0.7},
+        )
+
+        with patch.object(
+            agent, "call_llm_json", new_callable=AsyncMock, return_value=mock_cot_result
+        ):
+            with pytest.raises(Exception, match="메모리 검색 실패"):
+                await agent.process(state)
+
+    @pytest.mark.asyncio
+    async def test_knowledge_stub_exception_handling(
+        self,
+        mock_memory: AsyncMock,
+        mock_cot_result: dict[str, Any],
+    ) -> None:
+        """KnowledgeAgentStub.search()에서 예외 발생 시 예외가 전파되는지 확인.
+
+        _fetch_knowledge_if_needed에 try/except가 없으므로 예외가 그대로 전파된다.
+        """
+        # 예외를 발생시키는 모의 Knowledge Agent 생성
+        failing_knowledge = AsyncMock()
+        failing_knowledge.search.side_effect = Exception("지식 검색 실패")
+
+        agent = PodcastReasoningAgent(
+            episode_memory=mock_memory,
+            knowledge_agent=failing_knowledge,
+        )
+
+        # complexity=0.6 → knowledge 호출 트리거 (>= 0.5)
+        state = AgentState(
+            user_input="테스트 입력",
+            user_id="test_user_001",
+            session_id="sess_test_001",
+            mode="podcast",
+            intent={"primary_intent": "test", "complexity_score": 0.6},
+        )
+
+        with patch.object(
+            agent, "call_llm_json", new_callable=AsyncMock, return_value=mock_cot_result
+        ):
+            with pytest.raises(Exception, match="지식 검색 실패"):
+                await agent.process(state)
+
+    def test_build_phase_context_all_none(
+        self,
+        agent_with_stubs: PodcastReasoningAgent,
+    ) -> None:
+        """_build_phase_context에 user_input만 전달하고 나머지 모두 None일 때 정상 동작 확인."""
+        context = agent_with_stubs._build_phase_context(
+            phase="CoT",
+            user_input="테스트 입력",
+            intent={},
+            got_result=None,
+            tot_result=None,
+            memory_result=None,
+            knowledge_result=None,
+        )
+
+        # user_input은 항상 포함
+        assert "[사용자 입력]" in context
+        assert "테스트 입력" in context
+        # intent가 빈 dict이므로 의도 분류 섹션은 미포함
+        assert "[의도 분류]" not in context
+        # 나머지 선택 섹션도 미포함
+        assert "[과거 에피소드 기억]" not in context
+        assert "[관련 전문 지식]" not in context
+        assert "[GoT 그래프 분석 결과]" not in context
+        assert "[ToT 구조 탐색 결과]" not in context

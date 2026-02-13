@@ -13,6 +13,7 @@ import pytest
 
 from src.agents.podcast.batch_validator import (
     BatchValidatorAgent,
+    _dict_to_readable,
     batch_validator_agent,
     batch_validator_node,
 )
@@ -349,3 +350,248 @@ class TestBatchValidatorNode:
 
         assert "validation_result" in result
         assert result["next_step"] == "script_personalizer"
+
+
+class TestBatchValidatorEdgeCases:
+    """경계 조건 및 누락된 상태 필드에 대한 엣지 케이스 테스트."""
+
+    @pytest.mark.asyncio
+    async def test_iteration_count_boundary_at_max(
+        self,
+        agent: BatchValidatorAgent,
+        failing_validation: dict[str, Any],
+    ) -> None:
+        """iteration_count가 정확히 MAX_RETRIES(2)일 때 실패하면 강제 통과해야 한다."""
+        state = AgentState(
+            user_input="테스트",
+            user_id="u",
+            session_id="s",
+            mode="podcast",
+            script_draft={"intro": {"content": "test"}},
+            content_analysis={},
+            reasoning_result={},
+            safety_flags={},
+            emotion_vectors={},
+            iteration_count=2,  # == MAX_RETRIES 정확한 경계값
+        )
+        with patch.object(
+            agent, "call_llm_json", new_callable=AsyncMock, return_value=failing_validation
+        ):
+            result = await agent.process(state)
+
+        # 경계값에서 재시도가 아닌 강제 통과되어야 한다
+        assert result["next_step"] == "script_personalizer"
+        assert result["validation_result"]["forced_pass"] is True
+        # iteration_count를 증가시키지 않아야 한다
+        assert "iteration_count" not in result
+
+    @pytest.mark.asyncio
+    async def test_iteration_count_above_max(
+        self,
+        agent: BatchValidatorAgent,
+        failing_validation: dict[str, Any],
+    ) -> None:
+        """iteration_count가 MAX_RETRIES를 크게 초과해도 강제 통과해야 한다."""
+        state = AgentState(
+            user_input="테스트",
+            user_id="u",
+            session_id="s",
+            mode="podcast",
+            script_draft={},
+            content_analysis={},
+            reasoning_result={},
+            safety_flags={},
+            emotion_vectors={},
+            iteration_count=5,  # MAX_RETRIES(2)를 크게 초과
+        )
+        with patch.object(
+            agent, "call_llm_json", new_callable=AsyncMock, return_value=failing_validation
+        ):
+            result = await agent.process(state)
+
+        assert result["next_step"] == "script_personalizer"
+        assert result["validation_result"]["forced_pass"] is True
+
+    @pytest.mark.asyncio
+    async def test_missing_script_draft_in_state(
+        self,
+        agent: BatchValidatorAgent,
+        passing_validation: dict[str, Any],
+    ) -> None:
+        """script_draft 키가 없는 상태에서도 기본값({})으로 정상 동작해야 한다."""
+        # script_draft 필드를 의도적으로 생략
+        state = AgentState(
+            user_input="테스트",
+            user_id="u",
+            session_id="s",
+            mode="podcast",
+            content_analysis={},
+            reasoning_result={},
+            safety_flags={},
+            emotion_vectors={},
+            iteration_count=0,
+        )
+        with patch.object(
+            agent, "call_llm_json", new_callable=AsyncMock, return_value=passing_validation
+        ):
+            result = await agent.process(state)
+
+        assert result["next_step"] == "script_personalizer"
+
+    @pytest.mark.asyncio
+    async def test_missing_emotion_vectors_in_state(
+        self,
+        agent: BatchValidatorAgent,
+        passing_validation: dict[str, Any],
+    ) -> None:
+        """emotion_vectors가 없으면 컨텍스트에 감정 상태 섹션이 포함되지 않아야 한다."""
+        # emotion_vectors 필드를 의도적으로 생략
+        state = AgentState(
+            user_input="테스트",
+            user_id="u",
+            session_id="s",
+            mode="podcast",
+            script_draft={"intro": {"content": "test"}},
+            content_analysis={},
+            reasoning_result={},
+            safety_flags={},
+            iteration_count=0,
+        )
+        mock = AsyncMock(return_value=passing_validation)
+        with patch.object(agent, "call_llm_json", mock):
+            await agent.process(state)
+
+        call_args = mock.call_args
+        user_message = call_args.kwargs.get(
+            "user_message", call_args.args[1] if len(call_args.args) > 1 else ""
+        )
+        # 감정 상태 섹션이 포함되지 않아야 한다
+        assert "감정 상태" not in user_message
+
+    @pytest.mark.asyncio
+    async def test_missing_all_optional_fields(
+        self,
+        agent: BatchValidatorAgent,
+        passing_validation: dict[str, Any],
+    ) -> None:
+        """필수 입력만 있고 선택 필드가 모두 없어도 LLM 호출 후 결과를 반환해야 한다."""
+        state = AgentState(
+            user_input="최소 입력",
+            user_id="u",
+            session_id="s",
+            mode="podcast",
+            iteration_count=0,
+        )
+        mock = AsyncMock(return_value=passing_validation)
+        with patch.object(agent, "call_llm_json", mock):
+            result = await agent.process(state)
+
+        # LLM이 호출되었는지 확인
+        mock.assert_called_once()
+        # 결과가 정상적으로 반환되어야 한다
+        assert "validation_result" in result
+        assert "next_step" in result
+
+    @pytest.mark.asyncio
+    async def test_llm_returns_empty_dict(
+        self,
+        agent: BatchValidatorAgent,
+    ) -> None:
+        """LLM이 빈 dict를 반환하면 passed가 False로 처리되어 재시도해야 한다."""
+        state = AgentState(
+            user_input="테스트",
+            user_id="u",
+            session_id="s",
+            mode="podcast",
+            script_draft={"intro": {"content": "test"}},
+            content_analysis={},
+            reasoning_result={},
+            safety_flags={},
+            emotion_vectors={},
+            iteration_count=0,
+        )
+        # LLM이 빈 dict를 반환하는 경우
+        with patch.object(agent, "call_llm_json", new_callable=AsyncMock, return_value={}):
+            result = await agent.process(state)
+
+        # passed 기본값이 False이므로 재시도 경로로 가야 한다
+        assert result["next_step"] == "retry_script"
+        assert result["iteration_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_llm_returns_passed_true_with_no_score(
+        self,
+        agent: BatchValidatorAgent,
+    ) -> None:
+        """LLM이 passed=True만 반환하고 score가 없어도 통과 경로로 라우팅해야 한다."""
+        state = AgentState(
+            user_input="테스트",
+            user_id="u",
+            session_id="s",
+            mode="podcast",
+            script_draft={"intro": {"content": "test"}},
+            content_analysis={},
+            reasoning_result={},
+            safety_flags={},
+            emotion_vectors={},
+            iteration_count=0,
+        )
+        # passed=True만 있는 최소 응답
+        minimal_response: dict[str, Any] = {"passed": True}
+        with patch.object(
+            agent, "call_llm_json", new_callable=AsyncMock, return_value=minimal_response
+        ):
+            result = await agent.process(state)
+
+        assert result["next_step"] == "script_personalizer"
+        assert result["validation_result"]["passed"] is True
+
+    @pytest.mark.asyncio
+    async def test_validation_result_preserves_all_criteria(
+        self,
+        agent: BatchValidatorAgent,
+        base_state: AgentState,
+        passing_validation: dict[str, Any],
+    ) -> None:
+        """검증 결과에 5가지 기준 키가 모두 보존되는지 확인한다."""
+        expected_criteria_keys = {
+            "structure_completeness",
+            "safety_compliance",
+            "tone_consistency",
+            "timing_appropriateness",
+            "content_safety",
+        }
+        with patch.object(
+            agent, "call_llm_json", new_callable=AsyncMock, return_value=passing_validation
+        ):
+            result = await agent.process(base_state)
+
+        criteria = result["validation_result"]["criteria"]
+        assert set(criteria.keys()) == expected_criteria_keys
+
+
+class TestDictToReadable:
+    """헬퍼 함수 _dict_to_readable 단위 테스트."""
+
+    def test_empty_dict(self) -> None:
+        """빈 dict는 빈 문자열을 반환해야 한다."""
+        assert _dict_to_readable({}) == ""
+
+    def test_nested_dict(self) -> None:
+        """중첩 dict는 들여쓰기와 함께 렌더링되어야 한다."""
+        nested = {
+            "level1": {
+                "level2_key": "value",
+            }
+        }
+        result = _dict_to_readable(nested)
+        # 최상위 키는 들여쓰기 없이
+        assert "level1:" in result
+        # 중첩 키는 들여쓰기와 함께
+        assert "  level2_key: value" in result
+
+    def test_list_value(self) -> None:
+        """list 값은 항목 개수가 표시되어야 한다."""
+        data = {"items": [1, 2, 3]}
+        result = _dict_to_readable(data)
+        assert "items: [3개 항목]" in result

@@ -1,6 +1,11 @@
 """
 BaseAgent — 모든 에이전트의 공통 부모 클래스.
 
+[Shared Infrastructure — 인터페이스 변경 금지]
+기존 public 메서드(process, __call__, call_llm, call_llm_json,
+get_prompt, create_message)의 시그니처와 동작을 변경하지 마시오.
+신규 메서드 추가만 허용. 수정 시 전체 테스트(pytest tests/ -v) 통과 필수.
+
 에이전트마다 반복되는 공통 코드를 한 곳에 모아
 코드 중복을 방지하고 프로토콜 규격 변경에 유연하게 대응한다.
 

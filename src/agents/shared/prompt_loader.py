@@ -1,6 +1,11 @@
 """
 PromptLoader — YAML 기반 프롬프트 로더.
 
+[Shared Infrastructure — 인터페이스 변경 금지]
+기존 public 메서드(load, load_all, get_version,
+get_available_versions, clear_cache)의 시그니처와 동작을 변경하지 마시오.
+신규 메서드 추가만 허용. 수정 시 전체 테스트(pytest tests/ -v) 통과 필수.
+
 에이전트별 프롬프트를 YAML 파일에서 로드하고 캐싱한다.
 보안 대책으로 yaml.safe_load()만 사용하고, 경로 조작(Path Traversal)을 방지한다.
 
