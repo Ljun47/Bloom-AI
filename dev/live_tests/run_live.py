@@ -21,14 +21,14 @@ Ollama(로컬), Anthropic API, AWS Bedrock 모든 프로바이더를 지원한�
     python3 -m dev.live_tests.run_live --agent content_analyzer --model mistral:7b
 
     # 모델 오버라이드 (Anthropic)
-    python3 -m dev.live_tests.run_live --agent content_analyzer --provider anthropic --model claude-sonnet-4-20250514
+    python3 -m dev.live_tests.run_live --agent content_analyzer \
+        --provider anthropic --model claude-sonnet-4-20250514
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import sys
 import time
 
 from dev.live_tests.conftest_live import print_banner

@@ -74,13 +74,11 @@ async def run_test(
 
         print(f"  입력 user_input: {state['user_input'][:60]}...")
         print(f"  입력 script_draft.title: {state['script_draft'].get('title', 'N/A')}")
-        print(
-            f"  입력 script_draft.total_duration: {state['script_draft'].get('total_duration', 'N/A')}초"
-        )
+        duration = state["script_draft"].get("total_duration", "N/A")
+        print(f"  입력 script_draft.total_duration: {duration}초")
         print(f"  입력 iteration_count: {state.get('iteration_count', 0)}")
-        print(
-            f"  입력 safety_flags.risk_level: {state.get('safety_flags', {}).get('risk_level', 'N/A')}"
-        )
+        risk = state.get("safety_flags", {}).get("risk_level", "N/A")
+        print(f"  입력 safety_flags.risk_level: {risk}")
 
         with Timer() as timer:
             result = await agent(state)

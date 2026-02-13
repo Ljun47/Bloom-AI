@@ -15,7 +15,6 @@ generate_mock_script()로 시뮬레이션한다 (fixtures.py 참조).
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -228,7 +227,7 @@ def _print_pipeline_summary(
     print(f"  총 소요 시간: {total_time:.2f}초")
     print(f"    TIER 1 Content Analyzer: {t1a.elapsed:.2f}초")
     print(f"    TIER 1 Podcast Reasoning: {t1b.elapsed:.2f}초")
-    print(f"    TIER 2 Script Generator: (mock — 0초)")
+    print("    TIER 2 Script Generator: (mock — 0초)")
     print(f"    TIER 3 Batch Validator: {t3.elapsed:.2f}초")
     print(f"    비동기 Learning Agent: {t4.elapsed:.2f}초")
 
