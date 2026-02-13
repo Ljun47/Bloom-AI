@@ -17,7 +17,7 @@ class EpisodeMemoryStub:
     """
     Episode Memory Agent의 stub 구현.
 
-    실제 에이전트는 Pinecone 벡터 검색 + PostgreSQL 메타데이터를 사용하지만,
+    실제 에이전트는 Pinecone 벡터 검색 + MySQL 메타데이터를 사용하지만,
     stub은 빈 결과를 반환한다.
 
     인터페이스 계약:

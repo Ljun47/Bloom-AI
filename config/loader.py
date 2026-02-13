@@ -49,9 +49,33 @@ class Settings:
 
     # --- LLM 설정 ---
 
+    @property
+    def llm_provider(self) -> str:
+        """LLM 프로바이더. 환경변수 LLM_PROVIDER로 오버라이드 가능."""
+        env_value = os.getenv("LLM_PROVIDER")
+        if env_value:
+            return env_value
+        return str(self._config["llm"].get("provider", "anthropic"))
+
+    @property
+    def bedrock_region(self) -> str:
+        """AWS Bedrock 리전. 환경변수 AWS_REGION으로 오버라이드 가능."""
+        env_value = os.getenv("AWS_REGION")
+        if env_value:
+            return env_value
+        return str(self._config["llm"].get("bedrock", {}).get("region", "ap-northeast-2"))
+
+    @property
+    def bedrock_config(self) -> dict[str, Any]:
+        """AWS Bedrock 설정 전체를 반환한다."""
+        return cast(
+            dict[str, Any],
+            self._config["llm"].get("bedrock", {}),
+        )
+
     def get_model_id(self, model_key: str) -> str:
         """
-        모델 키에 해당하는 실제 모델 ID를 반환한다.
+        모델 키에 해당하는 Anthropic 직접 API 모델 ID를 반환한다.
 
         환경변수 LLM_MODEL_{KEY}로 오버라이드 가능.
         예: LLM_MODEL_SONNET=claude-sonnet-4-20250514
@@ -69,6 +93,32 @@ class Settings:
             return env_value
 
         return str(self._config["llm"]["models"][model_key])
+
+    def get_bedrock_model_id(self, model_key: str) -> str:
+        """
+        모델 키에 해당하는 AWS Bedrock 모델 ID를 반환한다.
+
+        환경변수 LLM_BEDROCK_MODEL_{KEY}로 오버라이드 가능.
+        예: LLM_BEDROCK_MODEL_SONNET=anthropic.claude-sonnet-4-5-20250929-v2:0
+
+        Args:
+            model_key: 모델 키 (haiku, sonnet, opus)
+
+        Returns:
+            Bedrock 모델 ID 문자열
+        """
+        # 환경변수 오버라이드 확인
+        env_key = f"LLM_BEDROCK_MODEL_{model_key.upper()}"
+        env_value = os.getenv(env_key)
+        if env_value:
+            return env_value
+
+        bedrock_models = self._config["llm"].get("bedrock_models", {})
+        if model_key in bedrock_models:
+            return str(bedrock_models[model_key])
+
+        # fallback: 기본 Anthropic 모델 ID 사용
+        return self.get_model_id(model_key)
 
     def get_agent_config(self, agent_name: str) -> dict[str, Any]:
         """

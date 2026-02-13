@@ -30,34 +30,34 @@ mind-log/
 │   │   │
 │   │   ├── conversation/        # 대화모드 에이전트 (13개)
 │   │   │   ├── __init__.py
-│   │   │   ├── intent_classifier.py   # [Dev-A] TIER 0: 의도 분류
-│   │   │   ├── safety.py              # [Dev-C] TIER 1: 안전성 검사
-│   │   │   ├── emotion.py             # [Dev-A] TIER 1: 감정 분석
-│   │   │   ├── context.py             # [Dev-A] TIER 1: 맥락 관리
-│   │   │   ├── memory.py              # [Dev-B] 독립: 개인 기억 검색
-│   │   │   ├── knowledge.py           # [Dev-B] 독립: 전문 지식 검색
-│   │   │   ├── reasoning.py           # [Dev-B] TIER 1: 심층 추론
-│   │   │   ├── synthesis.py           # [Dev-B] TIER 2: 응답 생성
-│   │   │   ├── validator.py           # [Dev-C] TIER 3: 품질 검증
-│   │   │   ├── personalization.py     # [Dev-C] TIER 4: 개인화
-│   │   │   ├── visualization.py       # [Dev-C] 비동기: 시각화
-│   │   │   ├── telemetry.py           # [Dev-C] 비동기: 텔레메트리
-│   │   │   └── learning.py            # [Dev-C] 비동기: 학습
+│   │   │   ├── intent_classifier.py   # [개발자1] TIER 0: 의도 분류
+│   │   │   ├── safety.py              # [개발자2] TIER 1: 안전성 검사
+│   │   │   ├── emotion.py             # [개발자2] TIER 1: 감정 분석
+│   │   │   ├── context.py             # [개발자3] TIER 1: 맥락 관리
+│   │   │   ├── memory.py              # [개발자2] 독립: 개인 기억 검색
+│   │   │   ├── knowledge.py           # [개발자1] 독립: 전문 지식 검색
+│   │   │   ├── reasoning.py           # [개발자3] TIER 1: 심층 추론
+│   │   │   ├── synthesis.py           # [개발자1] TIER 2: 응답 생성
+│   │   │   ├── validator.py           # [개발자3] TIER 3: 품질 검증
+│   │   │   ├── personalization.py     # [개발자1] TIER 4: 개인화
+│   │   │   ├── visualization.py       # [개발자2] 비동기: 시각화
+│   │   │   ├── telemetry.py           # [미정] 비동기: 텔레메트리
+│   │   │   └── learning.py            # [개발자3] 비동기: 학습
 │   │   │
 │   │   ├── podcast/             # 팟캐스트모드 에이전트 (7개)
 │   │   │   ├── __init__.py
-│   │   │   ├── content_analyzer.py    # [Dev-A] TIER 1: 콘텐츠 분석
-│   │   │   ├── episode_memory.py      # [Dev-B] 독립: 에피소드 기억
-│   │   │   ├── podcast_reasoning.py   # [Dev-B] TIER 1: 팟캐스트 추론
-│   │   │   ├── script_generator.py    # [Dev-B] TIER 2: 스크립트 생성
-│   │   │   ├── batch_validator.py     # [Dev-C] TIER 3: 배치 검증
-│   │   │   ├── script_personalizer.py # [Dev-C] TIER 4: 스크립트 개인화
-│   │   │   └── visualization.py       # [Dev-C] TIER 2/비동기: 커버 이미지
+│   │   │   ├── content_analyzer.py    # [개발자3] TIER 1: 콘텐츠 분석
+│   │   │   ├── episode_memory.py      # [개발자2] 독립: 에피소드 기억
+│   │   │   ├── podcast_reasoning.py   # [개발자3] TIER 1: 팟캐스트 추론
+│   │   │   ├── script_generator.py    # [개발자1] TIER 2: 스크립트 생성
+│   │   │   ├── batch_validator.py     # [개발자3] TIER 3: 배치 검증
+│   │   │   ├── script_personalizer.py # [개발자1] TIER 4: 스크립트 개인화
+│   │   │   └── visualization.py       # [개발자2] TIER 2/비동기: 커버 이미지
 │   │   │
 │   │   └── shared/              # 공용 에이전트 유틸리티
 │   │       ├── __init__.py
 │   │       ├── base_agent.py    # 에이전트 기본 클래스
-│   │       ├── llm_client.py    # Anthropic API 클라이언트
+│   │       ├── llm_client.py    # 듀얼 LLM 클라이언트 (Anthropic + Bedrock)
 │   │       └── message_router.py # 메시지 라우팅 유틸리티
 │   │
 │   ├── api/                     # 백엔드 API 통신 (Protected - 3인 합의 필수)
@@ -129,9 +129,10 @@ mind-log/
 
 | 표시 | 의미 |
 |------|------|
-| [Dev-A] | 분석 도메인 개발자가 소유 |
-| [Dev-B] | 추론/생성 도메인 개발자가 소유 |
-| [Dev-C] | 검증/부가 도메인 개발자가 소유 |
+| [개발자1] | 개발자1 소유 (브랜치: feature/analysis-*) |
+| [개발자2] | 개발자2 소유 (브랜치: feature/reasoning-*) |
+| [개발자3] | 개발자3 소유 (브랜치: feature/validation-*) |
+| [미정] | 담당자 미정 (전체 에이전트 완료 후 배정) |
 | Protected | 3인 합의 후에만 수정 가능 |
 
 ---

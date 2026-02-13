@@ -20,22 +20,23 @@
 
 ### 에이전트 구성 (14개)
 
-| 도메인 | 에이전트 | 모델 | 담당 개발자 |
-|--------|---------|------|------------|
-| **분석** | Intent Classifier (Router) | Haiku | Dev-A |
-| **분석** | Emotion Agent | Sonnet 4 | Dev-A |
-| **분석** | Context Agent | Haiku | Dev-A |
-| **분석** | Content Analyzer (팟캐스트) | Sonnet 4 | Dev-A |
-| **추론/생성** | Reasoning Agent | Opus 4.5 | Dev-B |
-| **추론/생성** | Memory Agent | Sonnet 4 | Dev-B |
-| **추론/생성** | Knowledge Agent | Sonnet 4 | Dev-B |
-| **추론/생성** | Synthesis Agent | Sonnet 4 | Dev-B |
-| **추론/생성** | Script Generator (팟캐스트) | Sonnet 4 | Dev-B |
-| **검증/부가** | Safety Agent | Sonnet 4 | Dev-C |
-| **검증/부가** | Validator Agent | Sonnet 4 | Dev-C |
-| **검증/부가** | Personalization Agent | Sonnet 4 | Dev-C |
-| **검증/부가** | Visualization Agent | Sonnet 4 | Dev-C |
-| **검증/부가** | Learning Agent / Telemetry | Haiku | Dev-C |
+| 에이전트 | 모델 | 담당 개발자 |
+|---------|------|------------|
+| Intent Classifier | Haiku | 개발자1 |
+| Emotion Agent | Sonnet 4 | 개발자2 |
+| Context Agent | Haiku | 개발자3 |
+| Content Analyzer (팟캐스트) | Sonnet 4 | 개발자3 |
+| Reasoning Agent | Opus 4.5 | 개발자3 |
+| Memory Agent | Sonnet 4 | 개발자2 |
+| Knowledge Agent | Sonnet 4 | 개발자1 |
+| Synthesis Agent | Sonnet 4 | 개발자1 |
+| Script Generator (팟캐스트) | Sonnet 4 | 개발자1 |
+| Safety Agent | Sonnet 4 | 개발자2 |
+| Validator Agent | Sonnet 4 | 개발자3 |
+| Personalization Agent | Sonnet 4 | 개발자1 |
+| Visualization Agent | Sonnet 4 | 개발자2 |
+| Learning Agent | Haiku | 개발자3 |
+| Telemetry Agent | Haiku | 미정 (전체 에이전트 완료 후 예정) |
 
 ### 실행 흐름
 
@@ -54,20 +55,21 @@ Phase 6 (비동기): Visualization + Telemetry + Learning
 
 ### 개발자별 담당 영역
 
-| 개발자 | 도메인 | 브랜치 접두사 | 에이전트 |
-|--------|--------|-------------|---------|
-| **Dev-A** | 분석 (Analysis) | `feature/analysis-*` | Router, Emotion, Context, Content Analyzer |
-| **Dev-B** | 추론/생성 (Reasoning) | `feature/reasoning-*` | Reasoning, Memory, Knowledge, Synthesis, Script Generator |
-| **Dev-C** | 검증/부가 (Validation) | `feature/validation-*` | Safety, Validator, Personalization, Visualization, Learning, Telemetry |
+| 개발자 | 브랜치 접두사 | 대화모드 에이전트 | 팟캐스트모드 에이전트 |
+|--------|-------------|-----------------|---------------------|
+| **개발자1** | `feature/analysis-*` | Intent Classifier, Knowledge, Synthesis, Personalization | Script Generator, Script Personalizer |
+| **개발자2** | `feature/reasoning-*` | Safety, Memory, Visualization, Emotion | Episode Memory, Visualization(Podcast) |
+| **개발자3** | `feature/validation-*` | Reasoning, Context, Validator, Learning | Podcast Reasoning, Content Analyzer, Batch Validator |
+| **미정** | — | Telemetry Agent | — (전체 에이전트 완료 후 예정) |
 
 ### 브랜치 전략
 
 ```
 main ← PR 머지 (리뷰 통과 필수)
  └── develop ← 통합 테스트 브랜치
-      ├── feature/analysis-*     (Dev-A)
-      ├── feature/reasoning-*    (Dev-B)
-      └── feature/validation-*   (Dev-C)
+      ├── feature/analysis-*     (개발자1)
+      ├── feature/reasoning-*    (개발자2)
+      └── feature/validation-*   (개발자3)
 ```
 
 **규칙:**
@@ -101,26 +103,26 @@ class AgentState(TypedDict):
     session_id: str
     mode: Literal["conversation", "podcast"]
 
-    # === Dev-A 담당 (분석) ===
-    intent: dict              # Router → 의도 분류 결과
-    emotion_vectors: dict     # Emotion → 감정 벡터
-    context: dict             # Context → 대화 맥락
-    content_analysis: dict    # Content Analyzer → 팟캐스트 주제 분석
-
-    # === Dev-B 담당 (추론/생성) ===
-    memory_results: dict      # Memory → 개인 기억 검색 결과
+    # === 개발자1 담당 ===
+    intent: dict              # Intent Classifier → 의도 분류 결과
     knowledge_results: dict   # Knowledge → 전문 지식 검색 결과
-    reasoning_result: dict    # Reasoning → GoT/ToT/CoT 추론 결과
     response_draft: str       # Synthesis → 응답 초안
+    final_output: str         # Personalization → 최종 응답
     script_draft: dict        # Script Generator → 팟캐스트 스크립트
 
-    # === Dev-C 담당 (검증/부가) ===
+    # === 개발자2 담당 ===
+    emotion_vectors: dict     # Emotion → 감정 벡터
     risk_level: int           # Safety → 위험 레벨 (0-4)
     risk_score: float         # Safety → Risk Score (0.0-1.0)
     safety_flags: dict        # Safety → 안전 플래그
-    validation_result: dict   # Validator → 검증 결과
-    final_output: str         # Personalization → 최종 응답
+    memory_results: dict      # Memory → 개인 기억 검색 결과
     visual_data: dict         # Visualization → 시각화 메타데이터
+
+    # === 개발자3 담당 ===
+    context: dict             # Context → 대화 맥락
+    content_analysis: dict    # Content Analyzer → 팟캐스트 주제 분석
+    reasoning_result: dict    # Reasoning → GoT/ToT/CoT 추론 결과
+    validation_result: dict   # Validator → 검증 결과
 
     # === 제어 ===
     next_step: str            # 워크플로우 라우팅 플래그
@@ -132,9 +134,9 @@ class AgentState(TypedDict):
 
 | 개발자 | 쓰기 가능 필드 | 읽기 가능 필드 |
 |--------|--------------|--------------|
-| Dev-A | intent, emotion_vectors, context, content_analysis | user_input, user_id, session_id, mode |
-| Dev-B | memory_results, knowledge_results, reasoning_result, response_draft, script_draft | intent, emotion_vectors, context, content_analysis + Dev-A 읽기 필드 |
-| Dev-C | risk_level, risk_score, safety_flags, validation_result, final_output, visual_data | 전체 필드 읽기 가능 |
+| 개발자1 | intent, knowledge_results, response_draft, final_output, script_draft | user_input, user_id, session_id, mode |
+| 개발자2 | emotion_vectors, risk_level, risk_score, safety_flags, memory_results, visual_data | 개발자1 쓰기 필드 + 개발자1 읽기 필드 |
+| 개발자3 | context, content_analysis, reasoning_result, validation_result | 전체 필드 읽기 가능 |
 
 ### 에이전트 간 메시지 포맷
 
@@ -231,12 +233,14 @@ Content-Type: application/json
 
 # workflow.py에서 통합 (3인 합의 영역)
 graph = StateGraph(AgentState)
-graph.add_node("router", router_node)         # Dev-A
-graph.add_node("safety", safety_node)         # Dev-C
-graph.add_node("emotion", emotion_node)       # Dev-A
-graph.add_node("reasoning", reasoning_node)   # Dev-B
-graph.add_node("synthesis", synthesis_node)    # Dev-B
-graph.add_node("validator", validator_node)    # Dev-C
+graph.add_node("intent_classifier", intent_classifier_node)  # 개발자1
+graph.add_node("safety", safety_node)                        # 개발자2
+graph.add_node("emotion", emotion_node)                      # 개발자2
+graph.add_node("context", context_node)                      # 개발자3
+graph.add_node("reasoning", reasoning_node)                  # 개발자3
+graph.add_node("knowledge", knowledge_node)                  # 개발자1
+graph.add_node("synthesis", synthesis_node)                   # 개발자1
+graph.add_node("validator", validator_node)                   # 개발자3
 # ... 조건부 엣지, 병렬 그룹 설정
 ```
 
@@ -270,10 +274,10 @@ async def agent_node(state: AgentState) -> AgentState:
 
 | 구분 | 기술 |
 |------|------|
-| LLM | Anthropic Claude (Opus 4.5, Sonnet 4, Haiku) |
+| LLM | Anthropic Claude (Opus 4.5, Sonnet 4, Haiku) / AWS Bedrock |
 | 오케스트레이션 | LangGraph StateGraph |
 | 벡터 DB | Pinecone / pgvector |
-| 관계형 DB | PostgreSQL |
+| 관계형 DB | MySQL |
 | 그래프 DB | Neo4j |
 | 캐시 | Redis |
 | 이미지 저장 | S3 / CDN |

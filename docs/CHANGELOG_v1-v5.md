@@ -12,11 +12,12 @@
 
 ### 변경 내용
 
-| 개발자 | 도메인 | 대화모드 | 팟캐스트모드 |
-|--------|--------|---------|------------|
-| Dev-A | 분석 (Analysis) | Intent Classifier, Emotion, Context | Content Analyzer |
-| Dev-B | 추론/생성 (Reasoning) | Reasoning, Memory, Knowledge, Synthesis | Episode Memory, Podcast Reasoning, Script Generator |
-| Dev-C | 검증/부가 (Validation) | Safety, Validator, Personalization, Visualization, Telemetry, Learning | Batch Validator, Script Personalizer, Visualization(Podcast) |
+| 개발자 | 대화모드 | 팟캐스트모드 |
+|--------|---------|------------|
+| 개발자1 | Intent Classifier, Knowledge, Synthesis, Personalization | Script Generator, Script Personalizer |
+| 개발자2 | Safety, Memory, Visualization, Emotion | Episode Memory, Visualization(Podcast) |
+| 개발자3 | Reasoning, Context, Validator, Learning | Podcast Reasoning, Content Analyzer, Batch Validator |
+| 미정 | Telemetry Agent | — (전체 에이전트 완료 후 예정) |
 
 ### 영향
 
@@ -39,7 +40,7 @@
 
 ### 영향
 
-- 개발자3(Dev-C) 초기 구현 범위: Content Analyzer, Podcast Reasoning, Batch Validator, Learning Agent (4개)
+- 개발자3 초기 구현 범위: Content Analyzer, Podcast Reasoning, Batch Validator, Learning Agent (4개)
 - 대화모드 전용 에이전트(Validator, Personalization 등)는 이후 Phase에서 구현
 
 ---

@@ -8,12 +8,23 @@ app:
 
 # LLM 모델 설정
 # API 모델은 변경될 수 있으므로 하드코딩하지 않고 여기서 관리한다.
+# provider: anthropic(직접 API) 또는 bedrock(AWS Bedrock) 선택
+# 환경변수 LLM_PROVIDER로 오버라이드 가능
 llm:
-  provider: anthropic
+  provider: anthropic  # anthropic | bedrock
   models:
     haiku: "claude-haiku-4-5-20251001"
     sonnet: "claude-sonnet-4-5-20250929"
     opus: "claude-opus-4-6"
+  # Bedrock 전용 모델 ID (provider: bedrock일 때 사용)
+  bedrock_models:
+    haiku: "anthropic.claude-haiku-4-5-20251001-v1:0"
+    sonnet: "anthropic.claude-sonnet-4-5-20250929-v2:0"
+    opus: "anthropic.claude-opus-4-6-v1:0"
+  # Bedrock 설정
+  bedrock:
+    region: "ap-northeast-2"  # 환경변수 AWS_REGION으로 오버라이드 가능
+    # endpoint_url: ""        # 커스텀 엔드포인트 (선택)
   default_max_tokens: 4096
   temperature:
     default: 0.7
