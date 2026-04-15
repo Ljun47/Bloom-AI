@@ -114,16 +114,21 @@ source dev/local_db/.env.db && pytest dev/local_db/ -v
 
 ---
 
-## 5. Git History 정리 (3인 합의 필요)
+## 5. Git History 정리 ✅ 완료 (2026-04-16 03:00)
 
-KT Cloud 토큰이 git history에 잔존한다. 완전 제거 절차:
+KT Cloud 토큰 등 민감정보를 git-filter-repo로 전체 히스토리에서 제거 완료.
 
-1. 3명 전원이 작업 중인 브랜치를 push
-2. `git filter-repo --replace-text expressions.txt` 실행
-3. `expressions.txt` 내용: `***KT_TOKEN_REMOVED***==>***REDACTED***`
-4. force-push 후 전원 re-clone
+**제거 패턴 (6종):**
+- KT Cloud API 토큰 → `***KT_TOKEN_REMOVED***`
+- KT Cloud 엔드포인트 → `KT_ENDPOINT_REMOVED`
+- ALB 도메인 → `ALB_DOMAIN_REMOVED`
+- DB 비밀번호 (`mindlog_pass`, `mindlog_root`, `mindlog_neo4j`) → `DB_*_REMOVED`
 
-> **이 작업은 별도 합의 후 진행한다.**
+**실행 결과:**
+1. GitHub에서 mirror clone (619 커밋) → `git filter-repo --replace-text expressions.txt --force`
+2. 6개 패턴 전부 0건 확인 후 force-push (develop + main)
+3. 로컬 `git remote prune origin` + `git gc --prune=now` → 0건 확인
+4. 상세 절차: `docs/superpowers/plans/2026-04-13-git-history-cleanup.md`
 
 ---
 
@@ -137,4 +142,4 @@ KT Cloud 토큰이 git history에 잔존한다. 완전 제거 절차:
 
 ---
 
-*마지막 업데이트: 2026-04-15 17:30*
+*마지막 업데이트: 2026-04-16 03:00*

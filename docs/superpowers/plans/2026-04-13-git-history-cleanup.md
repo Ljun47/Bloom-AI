@@ -209,24 +209,27 @@
 
 > ⚠️ **이 단계는 되돌릴 수 없다.** Task 2 검증 완료 후에만 실행.
 
-- [ ] **Step 1: 모든 브랜치 및 태그 force-push**
+- [x] **Step 1: 모든 브랜치 및 태그 force-push** (2026-04-16 완료)
 
   ```bash
-  cd /tmp/mind-log-mirror
-  # filter-repo가 remote를 삭제하므로 반드시 add로 재등록
+  cd /tmp/mind-log-mirror-new  # PR #160 포함 새 미러
   git remote add origin https://github.com/chilktc/AI
   git push --force --all
   git push --force --tags
   ```
 
-  Expected:
+  **결과**:
   ```
-  + <old_hash>...<new_hash> main -> main (forced update)
-  + <old_hash>...<new_hash> develop -> develop (forced update)
-  ...
+  + be9d4c4...9ec0ebd develop -> develop (forced update)
+  + 996067a...d9ea443 main -> main (forced update)
+  Everything up-to-date  (태그 없음)
   ```
 
-- [ ] **Step 2: GitHub에서 히스토리 정리 요청 (캐시 제거)**
+  > 주의: PR #160 머지 후 GitHub에서 새로 mirror clone (`/tmp/mind-log-mirror-new`, 619 커밋) → filter-repo 재실행 → force-push.
+  > ALB 부분 패턴(`t7-mindlog-prod-alb-1834710625`) 3건이 계획서 검증 명령어 텍스트 안에 잔존하나,
+  > 완전한 ALB 도메인(`.ap-northeast-2.elb.amazonaws.com` 포함) 0건 확인 후 허용 처리.
+
+- [x] **Step 2: GitHub에서 히스토리 정리 요청 (캐시 제거)**
 
   GitHub은 force-push 후에도 일부 데이터를 캐싱할 수 있다.
   GitHub Support에 "secret scanning / git history purge" 요청 또는
@@ -244,76 +247,50 @@
 > force-push 후 기존 로컬 클론은 모두 **오염된 상태**이다.
 > 기존 디렉토리를 사용하지 말고 반드시 re-clone.
 
-- [ ] **Step 1: 기존 로컬 클론 백업 후 삭제**
+- [x] **Step 1~3: 로컬 클론 재동기화** (2026-04-16 완료)
 
-  각 팀원 실행:
-  ```bash
-  # 기존 작업 디렉토리 백업
-  cp -r /path/to/mind-log /path/to/mind-log-old-backup
+  `rm -rf` 대신 `git fetch --all` + `git reset --hard origin/develop` + `git reset --hard origin/main`으로 동기화.
+  `git remote prune origin`으로 삭제된 원격 브랜치 tracking 제거.
 
-  # 기존 디렉토리 삭제 (re-clone 전)
-  rm -rf /path/to/mind-log
+- [x] **Step 4: 검증 — 패턴 잔존 없음 확인** (2026-04-16 완료)
+
+  ```
+  KT Token: 0건 ✅
+  mindlog_pass: 0건 ✅
   ```
 
-- [ ] **Step 2: 신규 클론**
+- [x] **Step 5: .git/objects 정리** (2026-04-16 완료)
 
   ```bash
-  git clone https://github.com/chilktc/AI mind-log
-  cd mind-log
-  git checkout develop
-  ```
-
-- [ ] **Step 3: 기존 작업 브랜치 복원 (필요 시)**
-
-  force-push로 원격 브랜치도 재작성되었으므로, 로컬에서 사용 중이던 브랜치도 원격에서 새로 체크아웃:
-  ```bash
-  git fetch --all
-  git checkout -b feature/my-branch origin/feature/my-branch
-  ```
-
-  > ⚠️ 기존 로컬 브랜치에서 cherry-pick하지 말 것 — 오염된 커밋이 다시 들어올 수 있음
-
-- [ ] **Step 4: 검증 — 신규 클론에서 패턴 잔존 없음 확인**
-
-  ```bash
-  cd mind-log
-  git log --all -S "***KT_TOKEN_REMOVED***" --oneline
-  # Expected: 출력 없음
-  ```
-
-- [ ] **Step 5: .git/objects 정리 (선택, 완전 제거용)**
-
-  filter-repo는 자동으로 reflog 정리를 수행하지만, 명시적 정리:
-  ```bash
-  cd mind-log
   git reflog expire --expire=now --all
-  git gc --prune=now --aggressive
+  git gc --prune=now
   ```
+  → 6개 패턴 전부 0건 최종 확인.
 
 ---
 
 ## Task 5: 후속 조치 및 문서 업데이트
 
-- [ ] **Step 0: filter-repo 실행 후 필수 후속 처리 (re-clone 직후)**
+- [x] **Step 0: filter-repo 실행 후 필수 후속 처리** (2026-04-16 완료)
 
   filter-repo는 모든 커밋 해시를 재작성한다. 다음 항목이 stale 상태가 됨:
 
   | 영향 항목 | 처리 방법 |
   |-----------|----------|
-  | GitHub PR (열린 것 포함) | 실행 전 전부 닫고, re-clone 후 새 해시로 재오픈 |
-  | PLAN_INDEX.md의 커밋 해시 참조 | 새 해시로 일괄 업데이트 필요 (또는 "git history 재작성 후 해시 무효" 주석 추가) |
+  | GitHub PR (열린 것 포함) | 실행 전 PR #160 머지 후 진행 — 열린 PR 없음 |
+  | PLAN_INDEX.md의 커밋 해시 참조 | 기존 해시는 무효 처리 (재작성 후 해시 일치 불가) |
   | git log로 확인하던 과거 참조 | 기존 해시 → 새 해시 검색 필요 |
-  | 이 계획서의 민감정보 표 | filter-repo 후 값이 `***REDACTED***` 로 치환됨 (정상) |
+  | 이 계획서의 민감정보 표 | filter-repo 후 값이 치환됨 (정상) |
 
-- [ ] **Step 1: SECURITY_REMEDIATION_TRACKER.md Section 5 완료 처리**
+- [x] **Step 1: SECURITY_REMEDIATION_TRACKER.md Section 5 완료 처리** (2026-04-16 완료)
 
-  파일: `docs/SECURITY_REMEDIATION_TRACKER.md`
-  Section 5의 체크박스 완료 처리 및 완료 날짜 기재.
+  파일: `docs/reports/SECURITY_REMEDIATION_TRACKER.md`
+  Section 5 내용을 완료 처리 + 실행 결과 기재.
 
-- [ ] **Step 2: PLAN_INDEX.md 업데이트**
+- [x] **Step 2: PLAN_INDEX.md 업데이트** (2026-04-16 완료)
 
   파일: `docs/superpowers/PLAN_INDEX.md`
-  #16 항목 상태를 `❌ 미완료` → `✅ 완료` 로 변경.
+  #28: `🔲 합의 대기` → `✅ 완료`. #16: `🔲 합의 대기` → `✅ 완료`.
 
 - [ ] **Step 3: pre-commit hook 도입 (선택)**
 
