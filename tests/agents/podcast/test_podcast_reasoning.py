@@ -107,71 +107,27 @@ def mock_got_result() -> dict[str, Any]:
 
 @pytest.fixture
 def mock_tot_result() -> dict[str, Any]:
-    """ToT 대안 평가 모의 결과."""
+    """ToT 대안 평가 모의 결과 — prompts/podcast/podcast_reasoning.yaml의 실제 출력 스키마와 정합.
+
+    실제 프롬프트는 branches/narrative_structure/target_duration/selection_rationale를 출력한다.
+    """
     return {
-        "alternatives": [
+        "branches": [
             {
-                "id": 1,
-                "structure_summary": "원인 탐색 → 극복 사례 → 실천법",
-                "segments": [
-                    {
-                        "segment": "intro",
-                        "title": "오프닝",
-                        "duration_seconds": 20,
-                        "focus": "공감",
-                    },
-                    {
-                        "segment": "body_1",
-                        "title": "원인 탐색",
-                        "duration_seconds": 80,
-                        "focus": "분석",
-                    },
-                    {
-                        "segment": "body_2",
-                        "title": "극복 사례",
-                        "duration_seconds": 80,
-                        "focus": "사례",
-                    },
-                    {
-                        "segment": "outro",
-                        "title": "마무리",
-                        "duration_seconds": 20,
-                        "focus": "격려",
-                    },
-                ],
-                "strengths": ["체계적 구조", "실용적"],
-                "weaknesses": ["감정 탐색 부족"],
-                "score": 0.85,
+                "structure": "discovery",
+                "pros": ["체계적 구조", "실용적"],
+                "cons": ["감정 탐색 부족"],
+                "predicted_impact": "원인 탐색 → 극복 사례 → 실천법 흐름으로 인지적 만족도 제공",
             },
             {
-                "id": 2,
-                "structure_summary": "감정 인정 → 공감 대화 → 작은 실천",
-                "segments": [
-                    {
-                        "segment": "intro",
-                        "title": "감정 인정",
-                        "duration_seconds": 30,
-                        "focus": "공감",
-                    },
-                    {
-                        "segment": "body_1",
-                        "title": "공감 대화",
-                        "duration_seconds": 120,
-                        "focus": "대화",
-                    },
-                    {
-                        "segment": "outro",
-                        "title": "작은 실천",
-                        "duration_seconds": 30,
-                        "focus": "실천",
-                    },
-                ],
-                "strengths": ["높은 공감력", "따뜻한 톤"],
-                "weaknesses": ["구조 단순"],
-                "score": 0.75,
+                "structure": "conversation",
+                "pros": ["높은 공감력", "따뜻한 톤"],
+                "cons": ["구조 단순"],
+                "predicted_impact": "감정 인정 → 공감 대화 → 작은 실천으로 정서적 위로 제공",
             },
         ],
-        "selected": 1,
+        "narrative_structure": "discovery",
+        "target_duration": 5,
         "selection_rationale": "체계적이면서 실용적인 구조가 3-5분 에피소드에 적합",
     }
 
@@ -450,7 +406,7 @@ async def test_got_tot_cot_structure_and_context(
             memory_result=None,
             knowledge_result=None,
         )
-    assert "alternatives" in tot and "selected" in tot
+    assert "branches" in tot and "narrative_structure" in tot
     assert "GoT 그래프 분석 결과" in _get_user_message(mock_t)
 
     # CoT
@@ -1189,3 +1145,96 @@ def test_build_phase_context_cot_knowledge_fallback_to_top_articles(
     assert "CBT 인지왜곡" in context
     assert "CBT Handbook" in context
     assert "DBT 감정조절" in context
+
+
+# ===================================================================
+# CRISIS 폴백 — risk_level >= 4면 reasoning 스킵, LLM 미호출
+# ===================================================================
+
+
+@pytest.mark.asyncio
+async def test_crisis_skips_reasoning_pipeline(
+    agent: PodcastReasoningAgent,
+) -> None:
+    """Intent Classifier가 CRISIS(risk_level=4)를 설정하면 GoT/ToT/CoT 모두 스킵."""
+    crisis_state = AgentState(
+        user_input="살고 싶지 않아요",
+        user_id="test_user",
+        session_id="sess_crisis",
+        mode="podcast",
+        intent={"primary_intent": "crisis_support", "complexity_score": 1.0},
+        risk_level=4,
+        risk_score=1.0,
+        safety_flags={"risk_detected": True},
+    )
+    mock_llm = AsyncMock()
+    with patch.object(agent, "call_llm_json", mock_llm):
+        result = await agent.process(crisis_state)
+
+    # LLM 미호출 확인
+    assert mock_llm.call_count == 0
+    # 폴백 reasoning_result 구조
+    reasoning = result["reasoning_result"]
+    assert reasoning["reasoning_strategy"] == "crisis_skip"
+    assert reasoning["reasoning_depth"] == "minimal"
+    assert reasoning["confidence"] == 0.0
+    assert reasoning["episode_structure"] == []
+    # 조건부 필드는 미포함 (메모리/지식 호출도 안 함)
+    assert "memory_results" not in result
+    assert "knowledge_results" not in result
+
+
+@pytest.mark.asyncio
+async def test_normal_state_does_not_trigger_crisis_skip(
+    agent: PodcastReasoningAgent,
+    base_state: AgentState,
+    mock_got_result: dict[str, Any],
+    mock_tot_result: dict[str, Any],
+    mock_cot_result: dict[str, Any],
+) -> None:
+    """risk_level=0(정상)이면 reasoning 파이프라인이 정상 실행된다 (회귀 방지)."""
+    # base_state는 risk_level 미설정 (기본값 0) → CRISIS 가드 통과
+    mock_full = AsyncMock(side_effect=[mock_got_result, mock_tot_result, mock_cot_result])
+    with patch.object(agent, "call_llm_json", mock_full):
+        result = await agent.process(base_state)
+
+    assert mock_full.call_count == 3
+    assert result["reasoning_result"]["reasoning_depth"] == "full"
+    assert result["reasoning_result"]["reasoning_strategy"] != "crisis_skip"
+
+
+# ===================================================================
+# ToT 키 정합 — branches/narrative_structure가 CoT 컨텍스트에 반영되는지
+# ===================================================================
+
+
+def test_tot_context_uses_branches_and_narrative_structure(
+    agent_with_stubs: PodcastReasoningAgent,
+) -> None:
+    """_build_phase_context가 ToT의 branches/narrative_structure를 올바르게 추출한다.
+
+    회귀 방지: 이전엔 alternatives/selected 키를 찾아 항상 0개로 표시되던 버그.
+    """
+    tot_result = {
+        "branches": [
+            {"structure": "discovery", "pros": ["a"], "cons": ["b"]},
+            {"structure": "conversation", "pros": ["c"], "cons": ["d"]},
+            {"structure": "reflection", "pros": ["e"], "cons": ["f"]},
+        ],
+        "narrative_structure": "discovery",
+        "target_duration": 5,
+        "selection_rationale": "체계적 구조 선호",
+    }
+    context = agent_with_stubs._build_phase_context(
+        phase="CoT",
+        user_input="테스트 입력",
+        intent={},
+        tot_result=tot_result,
+    )
+    assert "[ToT 구조 탐색 결과]" in context
+    assert "3개 대안" in context
+    assert "'discovery'" in context
+    assert "목표 5분" in context
+    assert "체계적 구조 선호" in context
+    # 회귀 방지: 잘못된 키로 0개로 표시되지 않아야 함
+    assert "0개 대안" not in context
