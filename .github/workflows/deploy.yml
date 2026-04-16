@@ -1,9 +1,10 @@
 name: AI Server Auto Deploy (SSM)
 
 on:
-  push:
-    branches:
-      - develop
+  workflow_run:
+    workflows: ["CI"]   # ci.yml의 name: 필드와 정확히 일치
+    branches: [main]
+    types: [completed]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -15,6 +16,10 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    # CI 워크플로우가 main 브랜치의 push 이벤트에서 성공으로 완료된 경우에만 실행
+    # event == 'push' 조건: PR CI 성공 시 불필요한 배포 방지
+    # ⚠️ if 조건은 단일 라인 필수 — | 블록 스칼라 사용 시 문자열로 처리되어 평가 안됨
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
     permissions:
       contents: read
       packages: write
@@ -42,9 +47,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}-ai-server
           tags: |
-            type=sha,format=long
-            type=ref,event=branch
-            latest
+            type=raw,value=sha-${{ github.event.workflow_run.head_sha }}
+            type=raw,value=latest
 
       - name: Build and push AI Server Docker image
         uses: docker/build-push-action@v6
@@ -84,10 +88,10 @@ jobs:
               "mkdir -p /home/ubuntu/app",
               "sudo chown -R ubuntu:ubuntu /home/ubuntu/app",
               "cd /home/ubuntu/app",
-              "if [ ! -d .git ]; then git clone -b develop ${{ github.server_url }}/${{ github.repository }}.git . ; fi",
+              "if [ ! -d .git ]; then git clone -b main ${{ github.server_url }}/${{ github.repository }}.git . ; fi",
               "git config --system --add safe.directory /home/ubuntu/app",
-              "git fetch origin develop",
-              "git reset --hard origin/develop",
+              "git fetch origin main",
+              "git reset --hard origin/main",
               "printf '"'"'%s\\n'"'"' '"'"'LANGCHAIN_TRACING_V2=${{ secrets.LANGCHAIN_TRACING_V2 }}'"'"' > .env",
               "printf '"'"'%s\\n'"'"' '"'"'LANGCHAIN_API_KEY=${{ secrets.LANGCHAIN_API_KEY }}'"'"' >> .env",
               "printf '"'"'%s\\n'"'"' '"'"'LANGCHAIN_PROJECT=${{ secrets.LANGCHAIN_PROJECT }}'"'"' >> .env",
@@ -123,7 +127,7 @@ jobs:
               "printf '"'"'%s\\n'"'"' '"'"'PINECONE_INDEX_KNOWLEDGE=${{ secrets.PINECONE_INDEX_KNOWLEDGE }}'"'"' >> .env",
               "printf '"'"'%s\\n'"'"' '"'"'PINECONE_API_KEY=${{ secrets.PINECONE_API_KEY }}'"'"' >> .env",
               "printf '"'"'%s\\n'"'"' '"'"'PROMPT_DIR=/app/prompts'"'"' >> .env",
-              "printf '"'"'%s\\n'"'"' '"'"'AI_SERVER_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}-ai-server:sha-${{ github.sha }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'AI_SERVER_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}-ai-server:sha-${{ github.event.workflow_run.head_sha }}'"'"' >> .env",
               "chmod 600 /home/ubuntu/app/.env",
               "echo ${{ secrets.GHCR_TOKEN }} | sudo docker login ghcr.io -u ${{ github.actor }} --password-stdin",
               "PREV_IMAGE=$(sudo docker inspect $(sudo docker compose ps -q ai-server 2>/dev/null) --format=\"{{.Image}}\" 2>/dev/null || echo ); echo \"$PREV_IMAGE\" > /home/ubuntu/app/.prev_image",
