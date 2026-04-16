@@ -84,14 +84,15 @@ class BackendClient:
         )
 
     async def _on_response(self, response: httpx.Response) -> None:
-        """HTTP 응답 로깅 이벤트 훅 (모든 응답 상세 로깅)."""
-        try:
-            response_body = response.text[:1000]
-        except Exception:
-            response_body = "[응답 본문 읽기 실패]"
-
+        """HTTP 응답 로깅 이벤트 훅 (성공=헤더만, 에러=본문 포함)."""
         if response.status_code >= 400:
-            # 에러 응답: ERROR 레벨
+            # 에러 응답: 본문을 읽어서 ERROR 레벨로 상세 로깅 (디버깅 용도)
+            # event hook 시점에는 본문이 미수신 상태이므로 명시적으로 aread() 호출
+            try:
+                await response.aread()
+                response_body = response.text[:1000]
+            except Exception:
+                response_body = "[응답 본문 읽기 실패]"
             _logger.error(
                 "[BackendClient] HTTP 에러 응답",
                 extra={
@@ -102,14 +103,21 @@ class BackendClient:
                 },
             )
         else:
-            # 성공 응답 (200-399): INFO 레벨
+            # 성공 응답 (200-399): INFO 레벨, 본문 미로깅 (노이즈 방지)
+            # content-length는 응답 헤더에서 직접 추출 (스트리밍 미강제)
+            content_length_header = response.headers.get("content-length")
+            try:
+                content_length: int | None = (
+                    int(content_length_header) if content_length_header is not None else None
+                )
+            except (TypeError, ValueError):
+                content_length = None
             _logger.info(
                 "[BackendClient] HTTP 성공 응답",
                 extra={
                     "status_code": response.status_code,
                     "url": str(response.request.url),
-                    "response_body": response_body,
-                    "content_length": len(response_body),
+                    "content_length": content_length,
                 },
             )
 

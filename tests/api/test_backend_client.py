@@ -256,3 +256,100 @@ async def test_ingest_mind_frequencies_logs_error_at_error_level():
         await client.ingest_mind_frequencies(
             session_id="s1", keywords=["번아웃"], description="힘든 하루"
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests: _on_response 로그 하이브리드 (성공=헤더만, 에러=본문 포함)
+# ---------------------------------------------------------------------------
+
+
+class TestOnResponseLoggingHybrid:
+    """_on_response 훅의 하이브리드 로깅 동작 검증.
+
+    - 성공(2xx-3xx): response.text 호출 안 함, content-length 헤더만 사용
+    - 에러(4xx-5xx): await response.aread() 후 response.text 호출하여 본문 로깅
+
+    NOTE: src.api.client._logger는 propagate=False로 설정되어 caplog가 잡지 못한다.
+          따라서 _logger를 직접 patch하여 호출 인자를 검증한다.
+    """
+
+    @pytest.mark.asyncio
+    async def test_success_response_skips_body_read(self):
+        """200 응답에서 본문 읽기 시도 없이 헤더만 로깅된다."""
+        from src.api import client as client_module
+        from src.api.client import BackendClient
+
+        client = BackendClient(base_url="http://test")
+
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 200
+        response.headers = httpx.Headers({"content-length": "42"})
+        response.request = MagicMock()
+        response.request.url = "http://test/resource"
+        # text 속성 접근 시 실패 — 성공 응답에서 호출되면 안 됨
+        type(response).text = property(
+            lambda self: (_ for _ in ()).throw(AssertionError("text는 호출되면 안 됨"))
+        )
+        response.aread = AsyncMock()
+
+        with patch.object(client_module, "_logger") as mock_logger:
+            await client._on_response(response)
+
+        # aread가 호출되지 않아야 함 (성공 응답은 본문 미수신)
+        response.aread.assert_not_called()
+        # info 레벨 1회 호출
+        mock_logger.info.assert_called_once()
+        call_kwargs = mock_logger.info.call_args
+        extra = call_kwargs.kwargs["extra"]
+        assert extra["status_code"] == 200
+        # content-length 헤더 값 사용
+        assert extra["content_length"] == 42
+        # response_body 키가 extra에 없어야 함 (본문 미로깅)
+        assert "response_body" not in extra
+
+    @pytest.mark.asyncio
+    async def test_error_response_reads_body(self):
+        """500 응답에서 await aread() 후 본문이 로그에 포함된다."""
+        from src.api import client as client_module
+        from src.api.client import BackendClient
+
+        client = BackendClient(base_url="http://test")
+
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 500
+        response.headers = httpx.Headers({"content-type": "application/json"})
+        response.request = MagicMock()
+        response.request.url = "http://test/resource"
+        response.text = '{"error":"internal server error","detail":"boom"}'
+        response.aread = AsyncMock()
+
+        with patch.object(client_module, "_logger") as mock_logger:
+            await client._on_response(response)
+
+        # 에러 응답은 명시적으로 본문 읽기
+        response.aread.assert_awaited_once()
+        mock_logger.error.assert_called_once()
+        extra = mock_logger.error.call_args.kwargs["extra"]
+        assert extra["status_code"] == 500
+        assert "internal server error" in extra["response_body"]
+
+    @pytest.mark.asyncio
+    async def test_success_without_content_length_header(self):
+        """Content-Length 헤더 없으면 content_length=None으로 안전 처리."""
+        from src.api import client as client_module
+        from src.api.client import BackendClient
+
+        client = BackendClient(base_url="http://test")
+
+        response = MagicMock(spec=httpx.Response)
+        response.status_code = 201
+        response.headers = httpx.Headers({})  # content-length 미포함
+        response.request = MagicMock()
+        response.request.url = "http://test/resource"
+        response.aread = AsyncMock()
+
+        with patch.object(client_module, "_logger") as mock_logger:
+            await client._on_response(response)
+
+        extra = mock_logger.info.call_args.kwargs["extra"]
+        assert extra["content_length"] is None
