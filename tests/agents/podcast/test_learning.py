@@ -59,19 +59,18 @@ async def test_process_returns_empty_dict(agent: LearningAgent, full_state: Agen
 
 
 @pytest.mark.asyncio
-async def test_llm_failure_propagates_exception(
+async def test_llm_failure_returns_empty_dict(
     agent: LearningAgent, full_state: AgentState
 ) -> None:
-    """LLM 호출 실패 시 예외가 전파된다.
+    """LLM 호출 실패 시 예외를 흡수하고 빈 dict를 반환한다.
 
-    NOTE: process()에 LLM 실패 핸들러 없음 — workflow에서 asyncio.create_task()로
-    실행하면 전체 파이프라인에 영향 없음. 저장 실패만 내부 처리.
+    비동기 후처리 에이전트이므로 LLM 파싱 실패가 파이프라인 전체에 영향을 주면 안 된다.
     """
     with patch.object(
         agent, "call_llm_json", new_callable=AsyncMock, side_effect=RuntimeError("LLM error")
     ):
-        with pytest.raises(RuntimeError, match="LLM error"):
-            await agent.process(full_state)
+        result = await agent.process(full_state)
+    assert result == {}
 
 
 @pytest.mark.asyncio
