@@ -115,6 +115,24 @@ class PodcastReasoningAgent(BaseAgent):
                     "error": "user_input_missing",
                 }
             }
+
+        # CRISIS 폴백 — Intent Classifier(TIER 0)의 1차 위기 감지 신호를 보고 추론 스킵
+        # TIER 1 병렬 실행이라 Safety 결과는 못 받으므로 risk_level(int)만 참조한다.
+        # CRISIS 시 reasoning은 후속 단계에서 사용되지 않으므로(TIER 2~4 모두 폴백) 스킵해도 안전.
+        if state.get("risk_level", 0) >= 4:
+            self.logger.info("[PodcastReasoning] CRISIS 감지 — reasoning 스킵 (LLM 미호출)")
+            return {
+                "reasoning_result": {
+                    "episode_structure": [],
+                    "narrative_flow": "",
+                    "key_points": [],
+                    "emotional_journey": [],
+                    "confidence": 0.0,
+                    "reasoning_depth": "minimal",
+                    "reasoning_strategy": "crisis_skip",
+                }
+            }
+
         user_id = state.get("user_id", "")
         intent = state.get("intent", {})
         execution_plan = state.get("execution_plan", {})
@@ -236,11 +254,12 @@ class PodcastReasoningAgent(BaseAgent):
             tot_result = await self._tree_of_thoughts(
                 user_input, intent, got_result, memory_result, knowledge_result
             )
-            selected_id = tot_result.get("selected", "?")
+            # 프롬프트 출력 키와 정합: branches(대안 리스트), narrative_structure(선택된 구조)
+            selected_structure = tot_result.get("narrative_structure", "?")
             self.logger.info(
-                "ToT 완료 — 대안 %d개, 선택 #%s",
-                len(tot_result.get("alternatives", [])),
-                selected_id,
+                "ToT 완료 — 대안 %d개, 선택=%s",
+                len(tot_result.get("branches", [])),
+                selected_structure,
             )
 
         # CoT: 항상 실행
@@ -532,12 +551,15 @@ class PodcastReasoningAgent(BaseAgent):
             )
 
         if tot_result is not None:
-            selected = tot_result.get("selected", "?")
+            # 프롬프트 출력 키와 정합: branches/narrative_structure/selection_rationale
+            selected_structure = tot_result.get("narrative_structure", "?")
+            target_duration = tot_result.get("target_duration", "")
             rationale = tot_result.get("selection_rationale", "")
-            alt_count = len(tot_result.get("alternatives", []))
+            alt_count = len(tot_result.get("branches", []))
+            duration_part = f", 목표 {target_duration}분" if target_duration else ""
             parts.append(
                 f"[ToT 구조 탐색 결과]\n"
-                f"- {alt_count}개 대안 중 #{selected} 선택\n"
+                f"- {alt_count}개 대안 중 '{selected_structure}' 선택{duration_part}\n"
                 f"- 선택 이유: {rationale}"
             )
 
