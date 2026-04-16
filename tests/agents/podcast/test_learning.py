@@ -59,9 +59,7 @@ async def test_process_returns_empty_dict(agent: LearningAgent, full_state: Agen
 
 
 @pytest.mark.asyncio
-async def test_llm_failure_returns_empty_dict(
-    agent: LearningAgent, full_state: AgentState
-) -> None:
+async def test_llm_failure_returns_empty_dict(agent: LearningAgent, full_state: AgentState) -> None:
     """LLM 호출 실패 시 예외를 흡수하고 빈 dict를 반환한다.
 
     비동기 후처리 에이전트이므로 LLM 파싱 실패가 파이프라인 전체에 영향을 주면 안 된다.
