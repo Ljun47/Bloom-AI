@@ -46,7 +46,9 @@ echo "OPENAI_API_KEY=sk-..." >> .env
 
 > **보안 주의:** API 키는 반드시 `.env` 파일에만 저장한다. 코드나 커밋에 포함하지 마시오.
 
-> **기본 프로바이더 (Round 4 이후):** OpenAI `gpt-4o-mini`가 운영 기본 모델이다. Ollama(`gpt-oss:20b`, `qwen2.5:14b`)는 로컬 테스트용으로 유지.
+> **기본 프로바이더:** `config/settings.yaml`의 `provider: bedrock` (AWS Bedrock)가 운영 기본이다.
+> 프롬프트 최적화 테스트(Round 4)에서는 OpenAI `gpt-4o-mini`를 사용했으며, Ollama는 로컬 개발용으로 유지.
+> 프로바이더 전환: `.env`에 `LLM_PROVIDER=openai` 또는 `LLM_PROVIDER=anthropic` 설정.
 
 ---
 
@@ -120,31 +122,9 @@ python3 -m dev.live_tests.test_e2e_multi_provider --ollama-only --input test_inp
 
 ## LangGraph 워크플로우 실행 흐름
 
-`test_e2e_multi_provider.py`는 실제 LangGraph `ainvoke()`를 호출하여 전체 파이프라인을 실행한다.
+> TIER 기반 파이프라인 전체 구조는 [CLAUDE.md](../../CLAUDE.md#실행-흐름)를 참조하세요.
 
-```
-사용자 입력 (최소 상태: user_input + mode + user_id + session_id)
-    ↓
-build_unified_graph() → compile() → ainvoke(state)
-    ↓
-TIER 0: IntentClassifier (REAL — LLM 의도 분류)
-    ↓ route_after_tier0 → "tier1_podcast"
-TIER 1 (병렬 Fan-out):
-├─ Safety Agent (REAL)
-├─ Emotion Agent (REAL)
-├─ Content Analyzer (REAL)
-└─ Podcast Reasoning (REAL)
-    ↓ route_after_tier1 → "tier2"
-TIER 2: Script Generator (REAL)
-    ↓
-TIER 3: Batch Validator (REAL)
-    ↓ route_after_tier3_podcast → "tier4_podcast"
-TIER 4: Script Personalizer (REAL)
-    ↓
-비동기: Visualization (REAL) + Telemetry (STUB) + Learning (REAL)
-    ↓
-END → 최종 상태 반환
-```
+`test_e2e_multi_provider.py`는 실제 LangGraph `ainvoke()`를 호출하여 `build_unified_graph() → compile() → ainvoke(state)` 전체 파이프라인을 실행한다.
 
 ### Mock 최소화
 
@@ -153,7 +133,7 @@ END → 최종 상태 반환
 | 모든 에이전트 | **REAL** | 팟캐스트 경로 전부 구현 완료 |
 | `BackendClient.save()` | **Mock** | 백엔드 서버 미실행 (Learning Agent + AgentDataPublisher 경유: Emotion·Content Analyzer) |
 | LLM 호출 | **REAL** | Ollama/OpenAI 실제 API 사용 |
-| Telemetry | **STUB** | 유일한 스텁 노드 (대화모드 전용) |
+| Telemetry | **콜백** | LangGraph 콜백으로 동작 (`MindLogTelemetryCallback`), 독립 노드 아님 |
 
 ### 초기 상태 (최소 입력)
 
@@ -190,7 +170,7 @@ IntentClassifier에 전달하는 초기 상태는 **최소한의 필드만** 포
 | 필드 | 필수 | 기본값 | 설명 |
 |------|------|--------|------|
 | `user_input` | ✅ | — | IntentClassifier에 전달할 사용자 입력 텍스트 |
-| `mode` | ❌ | `"podcast"` | 실행 모드 (`"podcast"` 또는 `"conversation"`) |
+| `mode` | ❌ | `"podcast"` | 실행 모드 (`"podcast"`) |
 | `user_id` | ❌ | `"user_e2e_graph_001"` | 사용자 ID |
 | `session_id` | ❌ | `"sess_e2e_graph_001"` | 세션 ID |
 
@@ -205,32 +185,29 @@ IntentClassifier에 전달하는 초기 상태는 **최소한의 필드만** 포
 
 ---
 
-## 프로바이더 전환과 싱글톤 리프레시
+## 프로바이더 전환 시 모듈 재로드
 
-### 문제
+### 아키텍처 (v27~)
 
-모든 에이전트 모듈은 **모듈 레벨 싱글톤**으로 에이전트 인스턴스를 생성한다.
-프로바이더를 전환(예: Ollama → OpenAI)할 때 이 싱글톤들이 이전 프로바이더의 LLMClient를 계속 사용하는 문제가 있다.
+에이전트는 모듈 레벨 싱글톤이 아니라 **노드 함수 내부에서 요청마다 새로 생성**된다.
+따라서 프로바이더 전환 시 싱글톤 리프레시가 불필요하며, Settings 리셋 + 모듈 재로드만 하면 된다.
 
-### 해결: `_refresh_all_singletons()`
+### 프로바이더 전환 방법
 
-프로바이더 전환 시 자동으로 호출되며:
+```python
+import importlib
+from config import loader as settings_mod
+from src.graph import workflow
 
-1. `config.loader` Settings 싱글톤 리셋
-2. `workflow.reset_agents()` 호출 — workflow.py 내부 3개 싱글톤 재생성
-3. 에이전트 모듈 8개를 `importlib.reload()`로 재로드
+# 1. Settings 싱글톤 리셋 (환경변수 재로드)
+settings_mod._settings_instance = None
 
+# 2. workflow 모듈 재로드 (노드 함수가 새 Settings로 에이전트 생성)
+importlib.reload(workflow)
 ```
-workflow.py:       _intent_classifier, _script_generator, _script_personalizer
-safety.py:         safety_agent
-emotion.py:        emotion_agent
-content_analyzer.py: content_analyzer_agent
-podcast_reasoning.py: podcast_reasoning_agent
-batch_validator.py:  batch_validator_agent
-visualization.py:    visualization_agent
-learning.py:         learning_agent
-episode_memory.py:   episode_memory_agent
-```
+
+> **참고**: `reset_agents()` 함수는 v27에서 제거되었다. 에이전트가 요청별로 생성되므로
+> 모듈 재로드만 하면 새 프로바이더 설정이 자동 적용된다.
 
 ---
 
@@ -296,13 +273,13 @@ OpenAI 키가 없으면 해당 테스트만 건너뛴다 (에러가 아님).
 대형 모델(20b+)은 GPU 없이 실행 시 2분 이상 소요될 수 있다.
 전체 워크플로우(10개 에이전트)는 총 5~10분 이상 걸릴 수 있다.
 
-### 싱글톤 리프레시 실패
+### 모듈 재로드 실패
 
 ```
-WARNING: 싱글톤 리프레시 실패 — src.agents.podcast.xxx: ...
+WARNING: 모듈 재로드 실패 — src.graph.workflow: ...
 ```
 
-특정 에이전트 모듈 reload 실패 시 이전 프로바이더의 설정으로 실행될 수 있다.
+workflow 모듈 reload 실패 시 이전 프로바이더의 설정으로 실행될 수 있다.
 한 번에 하나의 프로바이더만 테스트하려면 `--ollama-only` 또는 `--openai-only` 옵션을 사용한다.
 
 ---
@@ -378,4 +355,4 @@ pytest -m "unit or integration"
 
 ---
 
-*마지막 업데이트: 2026-03-13*
+*마지막 업데이트: 2026-04-14 11:00*

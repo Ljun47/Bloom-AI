@@ -7,7 +7,7 @@ EmotionAgent.process()가 AgentDataPublisher.publish()를 올바른 인자로
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -15,10 +15,10 @@ from src.agents.podcast.emotion import EmotionAgent
 from src.api.backend_resources import RESOURCE_EMOTION_LOG
 from src.models.agent_state import AgentState
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def agent() -> EmotionAgent:
@@ -58,79 +58,53 @@ def sample_state() -> AgentState:
 # Tests: publish() 호출 검증
 # ---------------------------------------------------------------------------
 
+
 class TestEmotionPublish:
     """EmotionAgent가 AgentDataPublisher.publish()를 올바르게 호출하는지 검증."""
 
     @pytest.mark.asyncio
-    async def test_publish_called_with_correct_resource(
-        self, agent: EmotionAgent, sample_llm_response: dict, sample_state: AgentState,
+    async def test_publish_called_with_correct_args(
+        self,
+        agent: EmotionAgent,
+        sample_llm_response: dict,
+        sample_state: AgentState,
     ) -> None:
-        """publish()의 resource가 RESOURCE_EMOTION_LOG인지 확인."""
+        """publish()가 올바른 resource, user/session, data로 호출되는지 통합 검증."""
         mock_publish = AsyncMock(return_value=True)
 
         with (
-            patch.object(agent, "call_llm_json", new_callable=AsyncMock, return_value=sample_llm_response),
-            patch("src.agents.podcast.emotion.AgentDataPublisher") as MockPublisher,
-        ):
-            MockPublisher.return_value.publish = mock_publish
-            await agent.process(sample_state)
-
-        mock_publish.assert_awaited_once()
-        call_kwargs = mock_publish.call_args
-        assert call_kwargs.kwargs["resource"] == RESOURCE_EMOTION_LOG
-
-    @pytest.mark.asyncio
-    async def test_publish_called_with_correct_user_session(
-        self, agent: EmotionAgent, sample_llm_response: dict,
-    ) -> None:
-        """publish()에 state의 user_id, session_id가 전달되는지 확인."""
-        state = AgentState(
-            user_input="테스트 입력",
-            user_id="user_789",
-            session_id="sess_xyz",
-            mode="podcast",
-        )
-        mock_publish = AsyncMock(return_value=True)
-
-        with (
-            patch.object(agent, "call_llm_json", new_callable=AsyncMock, return_value=sample_llm_response),
-            patch("src.agents.podcast.emotion.AgentDataPublisher") as MockPublisher,
-        ):
-            MockPublisher.return_value.publish = mock_publish
-            await agent.process(state)
-
-        call_kwargs = mock_publish.call_args.kwargs
-        assert call_kwargs["user_id"] == "user_789"
-        assert call_kwargs["session_id"] == "sess_xyz"
-
-    @pytest.mark.asyncio
-    async def test_publish_called_with_emotion_data(
-        self, agent: EmotionAgent, sample_llm_response: dict, sample_state: AgentState,
-    ) -> None:
-        """publish()에 전달되는 data가 emotion_vectors와 동일한지 확인."""
-        mock_publish = AsyncMock(return_value=True)
-
-        with (
-            patch.object(agent, "call_llm_json", new_callable=AsyncMock, return_value=sample_llm_response),
+            patch.object(
+                agent, "call_llm_json", new_callable=AsyncMock, return_value=sample_llm_response
+            ),
             patch("src.agents.podcast.emotion.AgentDataPublisher") as MockPublisher,
         ):
             MockPublisher.return_value.publish = mock_publish
             result = await agent.process(sample_state)
 
-        published_data = mock_publish.call_args.kwargs["data"]
-        expected_vectors = result["emotion_vectors"]
-        assert published_data == expected_vectors
+        mock_publish.assert_awaited_once()
+        call_kwargs = mock_publish.call_args.kwargs
+        # resource 검증
+        assert call_kwargs["resource"] == RESOURCE_EMOTION_LOG
+        # user/session 검증
+        assert call_kwargs["user_id"] == "user_123"
+        assert call_kwargs["session_id"] == "sess_abc"
+        # data 검증
+        assert call_kwargs["data"] == result["emotion_vectors"]
 
     @pytest.mark.asyncio
     async def test_publish_called_with_empty_user_session_when_missing(
-        self, agent: EmotionAgent, sample_llm_response: dict,
+        self,
+        agent: EmotionAgent,
+        sample_llm_response: dict,
     ) -> None:
         """state에 user_id/session_id가 없으면 빈 문자열이 전달된다."""
         state = AgentState(user_input="입력만 있음", mode="podcast")
         mock_publish = AsyncMock(return_value=True)
 
         with (
-            patch.object(agent, "call_llm_json", new_callable=AsyncMock, return_value=sample_llm_response),
+            patch.object(
+                agent, "call_llm_json", new_callable=AsyncMock, return_value=sample_llm_response
+            ),
             patch("src.agents.podcast.emotion.AgentDataPublisher") as MockPublisher,
         ):
             MockPublisher.return_value.publish = mock_publish
@@ -145,18 +119,24 @@ class TestEmotionPublish:
 # Tests: publish() 실패 시 에이전트 영향 없음
 # ---------------------------------------------------------------------------
 
+
 class TestEmotionPublishFailure:
     """publish() 실패 시 에이전트 반환값에 영향이 없는지 검증."""
 
     @pytest.mark.asyncio
     async def test_agent_returns_correctly_when_publish_fails(
-        self, agent: EmotionAgent, sample_llm_response: dict, sample_state: AgentState,
+        self,
+        agent: EmotionAgent,
+        sample_llm_response: dict,
+        sample_state: AgentState,
     ) -> None:
         """publish()가 False를 반환해도 emotion_vectors는 정상 반환된다."""
         mock_publish = AsyncMock(return_value=False)
 
         with (
-            patch.object(agent, "call_llm_json", new_callable=AsyncMock, return_value=sample_llm_response),
+            patch.object(
+                agent, "call_llm_json", new_callable=AsyncMock, return_value=sample_llm_response
+            ),
             patch("src.agents.podcast.emotion.AgentDataPublisher") as MockPublisher,
         ):
             MockPublisher.return_value.publish = mock_publish
@@ -168,7 +148,10 @@ class TestEmotionPublishFailure:
 
     @pytest.mark.asyncio
     async def test_agent_returns_correctly_when_publish_raises(
-        self, agent: EmotionAgent, sample_llm_response: dict, sample_state: AgentState,
+        self,
+        agent: EmotionAgent,
+        sample_llm_response: dict,
+        sample_state: AgentState,
     ) -> None:
         """publish()가 예외를 발생시켜도 emotion_vectors는 정상 반환된다.
 
@@ -178,7 +161,9 @@ class TestEmotionPublishFailure:
         mock_publish = AsyncMock(side_effect=RuntimeError("unexpected"))
 
         with (
-            patch.object(agent, "call_llm_json", new_callable=AsyncMock, return_value=sample_llm_response),
+            patch.object(
+                agent, "call_llm_json", new_callable=AsyncMock, return_value=sample_llm_response
+            ),
             patch("src.agents.podcast.emotion.AgentDataPublisher") as MockPublisher,
         ):
             MockPublisher.return_value.publish = mock_publish
@@ -190,13 +175,17 @@ class TestEmotionPublishFailure:
 
     @pytest.mark.asyncio
     async def test_fallback_still_publishes(
-        self, agent: EmotionAgent, sample_state: AgentState,
+        self,
+        agent: EmotionAgent,
+        sample_state: AgentState,
     ) -> None:
         """LLM KeyError fallback 시에도 publish()가 호출된다."""
         mock_publish = AsyncMock(return_value=True)
 
         with (
-            patch.object(agent, "call_llm_json", new_callable=AsyncMock, side_effect=KeyError("prompt")),
+            patch.object(
+                agent, "call_llm_json", new_callable=AsyncMock, side_effect=KeyError("prompt")
+            ),
             patch("src.agents.podcast.emotion.AgentDataPublisher") as MockPublisher,
         ):
             MockPublisher.return_value.publish = mock_publish

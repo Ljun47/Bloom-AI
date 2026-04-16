@@ -8,7 +8,6 @@ v9에서 도입된 Anthropic + AWS Bedrock 듀얼 아키텍처를 검증한다.
 
 from __future__ import annotations
 
-import io
 import json
 from pathlib import Path
 from typing import Any
@@ -27,6 +26,16 @@ from config.loader import Settings
 def _clean_llm_provider_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """LLM_PROVIDER 환경변수가 테스트에 간섭하지 않도록 제거."""
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _reset_circuit_breakers() -> None:
+    """테스트 간 Circuit Breaker 상태 격리."""
+    from src.agents.shared.llm_client import LLMClient
+
+    LLMClient._breakers = {}
+    yield
+    LLMClient._breakers = {}
 
 
 # ===================================================================
@@ -112,15 +121,17 @@ def _mock_settings_factory(
     if model_id is not None:
         agent_config["model_id"] = model_id
     settings.get_agent_config.return_value = agent_config
-    settings.get_model_id.return_value = (
-        model_id or "claude-sonnet-4-5-20250929"
-    )
-    settings.get_bedrock_model_id.return_value = (
-        "anthropic.claude-sonnet-4-5-20250929-v2:0"
-    )
+    settings.get_model_id.return_value = model_id or "claude-sonnet-4-5-20250929"
+    settings.get_bedrock_model_id.return_value = "anthropic.claude-sonnet-4-5-20250929-v2:0"
     settings.get_openai_model_id.return_value = "gpt-4o-mini"
     settings.bedrock_region = "ap-northeast-2"
     settings.bedrock_config = {"region": "ap-northeast-2"}
+    settings.circuit_breaker_config = {
+        "fail_max": 5,
+        "reset_timeout": 30,
+        "half_open_max_calls": 1,
+    }
+    settings.prompt_caching_config = {"enabled": False, "min_tokens": 1024}
     return settings
 
 
@@ -154,39 +165,35 @@ def test_settings_llm_provider_env_override(test_settings: Settings) -> None:
 
 
 @pytest.mark.parametrize(
-    "key, expected",
+    "getter, key, expected",
     [
-        ("haiku", "anthropic.claude-haiku-4-5-20251001-v1:0"),
-        ("sonnet", "anthropic.claude-sonnet-4-5-20250929-v2:0"),
-        ("opus", "anthropic.claude-opus-4-6-v1:0"),
+        ("get_bedrock_model_id", "haiku", "anthropic.claude-haiku-4-5-20251001-v1:0"),
+        ("get_bedrock_model_id", "sonnet", "anthropic.claude-sonnet-4-5-20250929-v2:0"),
+        ("get_bedrock_model_id", "opus", "anthropic.claude-opus-4-6-v1:0"),
+        ("get_openai_model_id", "haiku", "gpt-4o-mini"),
+        ("get_openai_model_id", "sonnet", "gpt-4o-mini"),
+        ("get_openai_model_id", "opus", "gpt-4o"),
+    ],
+    ids=[
+        "bedrock_haiku",
+        "bedrock_sonnet",
+        "bedrock_opus",
+        "openai_haiku",
+        "openai_sonnet",
+        "openai_opus",
     ],
 )
-def test_settings_bedrock_model_id(
-    test_settings: Settings, key: str, expected: str
+def test_settings_model_id_by_provider(
+    test_settings: Settings, getter: str, key: str, expected: str
 ) -> None:
-    """Bedrock 모델 ID를 키로 조회한다."""
-    assert test_settings.get_bedrock_model_id(key) == expected
+    """프로바이더별 모델 ID를 키로 조회한다."""
+    assert getattr(test_settings, getter)(key) == expected
 
 
 def test_settings_bedrock_model_id_env_override(test_settings: Settings) -> None:
     """환경변수로 Bedrock 모델 ID 오버라이드 가능."""
     with patch.dict("os.environ", {"LLM_BEDROCK_MODEL_SONNET": "custom-model"}):
         assert test_settings.get_bedrock_model_id("sonnet") == "custom-model"
-
-
-@pytest.mark.parametrize(
-    "key, expected",
-    [
-        ("haiku", "gpt-4o-mini"),
-        ("sonnet", "gpt-4o-mini"),
-        ("opus", "gpt-4o"),
-    ],
-)
-def test_settings_openai_model_id(
-    test_settings: Settings, key: str, expected: str
-) -> None:
-    """OpenAI 모델 ID를 키로 조회한다."""
-    assert test_settings.get_openai_model_id(key) == expected
 
 
 # ===================================================================
@@ -196,9 +203,7 @@ def test_settings_openai_model_id(
 
 @patch("src.agents.shared.llm_client.anthropic.AsyncAnthropic")
 @patch("src.agents.shared.llm_client.get_settings")
-def test_anthropic_client_init(
-    mock_settings: MagicMock, mock_anthropic: MagicMock
-) -> None:
+def test_anthropic_client_init(mock_settings: MagicMock, mock_anthropic: MagicMock) -> None:
     """기본 Anthropic 모드로 LLMClient가 초기화된다."""
     mock_settings.return_value = _mock_settings_factory()
 
@@ -211,9 +216,7 @@ def test_anthropic_client_init(
 
 @patch("src.agents.shared.llm_client.anthropic.AsyncAnthropic")
 @patch("src.agents.shared.llm_client.get_settings")
-async def test_anthropic_generate(
-    mock_settings: MagicMock, mock_anthropic_cls: MagicMock
-) -> None:
+async def test_anthropic_generate(mock_settings: MagicMock, mock_anthropic_cls: MagicMock) -> None:
     """Anthropic generate()가 API를 호출하고 텍스트를 반환한다."""
     mock_settings.return_value = _mock_settings_factory()
     mock_client = MagicMock()
@@ -247,9 +250,7 @@ async def test_anthropic_generate_json(
     from src.agents.shared.llm_client import LLMClient
 
     client = LLMClient(agent_name="content_analyzer")
-    result = await client.generate_json(
-        system_prompt="JSON으로 응답하라.", user_message="테스트"
-    )
+    result = await client.generate_json(system_prompt="JSON으로 응답하라.", user_message="테스트")
 
     assert result == {"key": "value", "score": 0.95}
 
@@ -269,24 +270,20 @@ def test_bedrock_client_init(mock_settings: MagicMock) -> None:
     with patch.dict("sys.modules", {"boto3": mock_boto3}):
         from src.agents.shared.llm_client import LLMClient
 
-        client = LLMClient(
-            agent_name="content_analyzer", provider_override="bedrock"
-        )
+        client = LLMClient(agent_name="content_analyzer", provider_override="bedrock")
         assert client.provider == "bedrock"
         assert client.model_id == "anthropic.claude-sonnet-4-5-20250929-v2:0"
 
 
 @patch("src.agents.shared.llm_client.get_settings")
 async def test_bedrock_generate(mock_settings: MagicMock) -> None:
-    """Bedrock generate()가 invoke_model을 호출한다."""
+    """Bedrock generate()가 Converse API를 호출한다."""
     mock_settings.return_value = _mock_settings_factory(model_id=None)
 
-    bedrock_body = json.dumps(
-        {"content": [{"text": "Bedrock 응답입니다."}]}
-    ).encode("utf-8")
     mock_bedrock_client = MagicMock()
-    mock_bedrock_client.invoke_model.return_value = {
-        "body": io.BytesIO(bedrock_body)
+    mock_bedrock_client.converse.return_value = {
+        "output": {"message": {"content": [{"text": "Bedrock 응답입니다."}]}},
+        "usage": {"inputTokens": 10, "outputTokens": 5},
     }
     mock_boto3 = MagicMock()
     mock_boto3.client.return_value = mock_bedrock_client
@@ -294,20 +291,16 @@ async def test_bedrock_generate(mock_settings: MagicMock) -> None:
     with patch.dict("sys.modules", {"boto3": mock_boto3}):
         from src.agents.shared.llm_client import LLMClient
 
-        client = LLMClient(
-            agent_name="content_analyzer", provider_override="bedrock"
-        )
+        client = LLMClient(agent_name="content_analyzer", provider_override="bedrock")
         result = await client.generate(system_prompt="시스템", user_message="메시지")
 
         assert result == "Bedrock 응답입니다."
-        mock_bedrock_client.invoke_model.assert_called_once()
+        mock_bedrock_client.converse.assert_called_once()
 
-        # invoke_model 요청 본문 검증
-        call_kwargs = mock_bedrock_client.invoke_model.call_args
-        request_body = json.loads(call_kwargs.kwargs["body"])
-        assert request_body["anthropic_version"] == "bedrock-2023-05-31"
-        assert request_body["system"] == "시스템"
-        assert request_body["messages"][0]["content"] == "메시지"
+        # Converse API 요청 검증
+        call_kwargs = mock_bedrock_client.converse.call_args
+        assert call_kwargs.kwargs["system"] == [{"text": "시스템"}]
+        assert call_kwargs.kwargs["messages"][0]["content"] == [{"text": "메시지"}]
 
 
 # ===================================================================
@@ -330,9 +323,7 @@ def test_provider_override_trumps_env_and_settings(
     ):
         from src.agents.shared.llm_client import LLMClient
 
-        client = LLMClient(
-            agent_name="content_analyzer", provider_override="bedrock"
-        )
+        client = LLMClient(agent_name="content_analyzer", provider_override="bedrock")
         assert client.provider == "bedrock"
 
 
@@ -391,9 +382,7 @@ def test_bedrock_without_boto3_raises(mock_settings: MagicMock) -> None:
         from src.agents.shared.llm_client import LLMClient
 
         with pytest.raises(ImportError, match="boto3"):
-            LLMClient(
-                agent_name="content_analyzer", provider_override="bedrock"
-            )
+            LLMClient(agent_name="content_analyzer", provider_override="bedrock")
 
 
 # ===================================================================
@@ -418,9 +407,7 @@ async def test_custom_provider_lifecycle(mock_settings: MagicMock) -> None:
         assert "test_local" in LLMClient._custom_providers
 
         # 초기화
-        client = LLMClient(
-            agent_name="content_analyzer", provider_override="test_local"
-        )
+        client = LLMClient(agent_name="content_analyzer", provider_override="test_local")
         assert client.provider == "test_local"
         mock_provider_cls.assert_called_once_with(model_id="sonnet")
 
@@ -453,9 +440,7 @@ async def test_custom_provider_error_propagates(mock_settings: MagicMock) -> Non
 
     try:
         LLMClient.register_provider("test_err", mock_provider_cls)
-        client = LLMClient(
-            agent_name="content_analyzer", provider_override="test_err"
-        )
+        client = LLMClient(agent_name="content_analyzer", provider_override="test_err")
 
         with pytest.raises(ConnectionError, match="Ollama 서버 연결 실패"):
             await client.generate(system_prompt="시스템", user_message="메시지")
@@ -479,9 +464,7 @@ def test_openai_client_init(mock_settings: MagicMock) -> None:
     with patch.dict("sys.modules", {"openai": mock_openai}):
         from src.agents.shared.llm_client import LLMClient
 
-        client = LLMClient(
-            agent_name="content_analyzer", provider_override="openai"
-        )
+        client = LLMClient(agent_name="content_analyzer", provider_override="openai")
         assert client.provider == "openai"
         assert client.model_id == "gpt-4o-mini"
 
@@ -503,18 +486,14 @@ async def test_openai_generate(mock_settings: MagicMock) -> None:
     mock_response.usage = mock_usage
 
     mock_client_instance = MagicMock()
-    mock_client_instance.chat.completions.create = AsyncMock(
-        return_value=mock_response
-    )
+    mock_client_instance.chat.completions.create = AsyncMock(return_value=mock_response)
     mock_openai = MagicMock()
     mock_openai.AsyncOpenAI.return_value = mock_client_instance
 
     with patch.dict("sys.modules", {"openai": mock_openai}):
         from src.agents.shared.llm_client import LLMClient
 
-        client = LLMClient(
-            agent_name="content_analyzer", provider_override="openai"
-        )
+        client = LLMClient(agent_name="content_analyzer", provider_override="openai")
         result = await client.generate(
             system_prompt="시스템 프롬프트", user_message="사용자 메시지"
         )
@@ -523,9 +502,7 @@ async def test_openai_generate(mock_settings: MagicMock) -> None:
         mock_client_instance.chat.completions.create.assert_called_once()
 
         # API 호출 파라미터 검증
-        call_kwargs = (
-            mock_client_instance.chat.completions.create.call_args.kwargs
-        )
+        call_kwargs = mock_client_instance.chat.completions.create.call_args.kwargs
         assert call_kwargs["model"] == "gpt-4o-mini"
         assert call_kwargs["messages"][0] == {
             "role": "system",
@@ -584,20 +561,140 @@ async def test_token_usage_lifecycle(
     assert client.total_usage["total_tokens"] == 0
     assert client.last_usage is not None  # last_usage는 리셋되지 않음
 
-
-@patch("src.agents.shared.llm_client.anthropic.AsyncAnthropic")
-@patch("src.agents.shared.llm_client.get_settings")
-def test_total_usage_returns_copy(
-    mock_settings: MagicMock, mock_anthropic: MagicMock
-) -> None:
-    """total_usage는 내부 dict의 복사본을 반환한다."""
-    mock_settings.return_value = _mock_settings_factory()
-
-    from src.agents.shared.llm_client import LLMClient
-
-    client = LLMClient(agent_name="content_analyzer")
-    total = client.total_usage
-    total["input_tokens"] = 99999  # 외부에서 변경
-
-    # 내부 상태는 영향 없음
+    # total_usage는 복사본 반환 — 외부 변경이 내부에 영향 없음
+    total_copy = client.total_usage
+    total_copy["input_tokens"] = 99999
     assert client.total_usage["input_tokens"] == 0
+
+
+# ===================================================================
+# Circuit Breaker 상태 전환 테스트
+# ===================================================================
+
+
+class TestCircuitBreakerStateTransitions:
+    """_CircuitBreaker 상태 머신의 전이를 검증한다.
+
+    상태 전이:
+        CLOSED → (fail_max 연속 실패) → OPEN
+        OPEN → (reset_timeout 경과) → HALF_OPEN
+        HALF_OPEN → (1회 성공) → CLOSED
+        HALF_OPEN → (1회 실패) → OPEN
+    """
+
+    @pytest.fixture
+    def cb(self):
+        """테스트용 Circuit Breaker (fail_max=3, reset_timeout=1.0)."""
+        from src.agents.shared.llm_client import _CircuitBreaker
+
+        return _CircuitBreaker(fail_max=3, reset_timeout=1.0)
+
+    async def test_initial_state_is_closed(self, cb) -> None:
+        """초기 상태는 CLOSED이다."""
+        assert cb.state == "closed"
+
+    async def test_closed_to_open_after_fail_max(self, cb) -> None:
+        """CLOSED에서 fail_max(3)회 연속 실패 시 OPEN으로 전환한다."""
+        assert cb.state == "closed"
+
+        await cb.record_failure()
+        assert cb.state == "closed"  # 1회 — 아직 CLOSED
+
+        await cb.record_failure()
+        assert cb.state == "closed"  # 2회 — 아직 CLOSED
+
+        await cb.record_failure()
+        assert cb.state == "open"  # 3회 — OPEN 전환
+
+    async def test_open_state_raises_circuit_open_error(self, cb) -> None:
+        """OPEN 상태에서 check() 호출 시 CircuitOpenError가 발생한다."""
+        from src.agents.shared.llm_client import CircuitOpenError
+
+        # OPEN 상태로 전환
+        for _ in range(3):
+            await cb.record_failure()
+        assert cb.state == "open"
+
+        with pytest.raises(CircuitOpenError, match="Circuit OPEN"):
+            await cb.check()
+
+    async def test_open_to_half_open_after_timeout(self, cb) -> None:
+        """OPEN에서 reset_timeout 경과 후 check() 호출 시 HALF_OPEN으로 전환한다."""
+        # OPEN 상태로 전환
+        for _ in range(3):
+            await cb.record_failure()
+        assert cb.state == "open"
+
+        # reset_timeout(1.0s) 경과 시뮬레이션
+        with patch("src.agents.shared.llm_client.time") as mock_time:
+            # record_failure 시점 + reset_timeout 이상 경과
+            mock_time.time.return_value = cb._last_failure_time + 2.0
+            await cb.check()
+
+        assert cb.state == "half_open"
+
+    async def test_half_open_to_closed_on_success(self, cb) -> None:
+        """HALF_OPEN에서 1회 성공 시 CLOSED로 복구한다."""
+        # OPEN → HALF_OPEN 으로 전환
+        for _ in range(3):
+            await cb.record_failure()
+
+        with patch("src.agents.shared.llm_client.time") as mock_time:
+            mock_time.time.return_value = cb._last_failure_time + 2.0
+            await cb.check()
+        assert cb.state == "half_open"
+
+        # 1회 성공 → CLOSED 복구
+        await cb.record_success()
+        assert cb.state == "closed"
+
+    async def test_half_open_to_open_on_failure(self, cb) -> None:
+        """HALF_OPEN에서 1회 실패 시 다시 OPEN으로 전환한다."""
+        # OPEN → HALF_OPEN 으로 전환
+        for _ in range(3):
+            await cb.record_failure()
+
+        with patch("src.agents.shared.llm_client.time") as mock_time:
+            mock_time.time.return_value = cb._last_failure_time + 2.0
+            await cb.check()
+        assert cb.state == "half_open"
+
+        # 1회 실패 → OPEN (failure_count가 이미 3이므로 >= fail_max)
+        await cb.record_failure()
+        assert cb.state == "open"
+
+    async def test_success_resets_failure_count(self, cb) -> None:
+        """성공 기록은 failure_count를 0으로 초기화한다."""
+        await cb.record_failure()
+        await cb.record_failure()
+        assert cb.state == "closed"  # 아직 fail_max 미만
+
+        await cb.record_success()
+        assert cb._failure_count == 0
+
+        # 다시 fail_max까지 실패해야 OPEN 전환
+        await cb.record_failure()
+        await cb.record_failure()
+        assert cb.state == "closed"
+
+        await cb.record_failure()
+        assert cb.state == "open"
+
+    async def test_check_passes_in_closed_state(self, cb) -> None:
+        """CLOSED 상태에서 check()는 예외 없이 통과한다."""
+        await cb.check()  # 예외 없음
+
+    async def test_open_not_expired_stays_open(self, cb) -> None:
+        """OPEN에서 reset_timeout 미경과 시 OPEN을 유지하고 에러를 발생시킨다."""
+        from src.agents.shared.llm_client import CircuitOpenError
+
+        for _ in range(3):
+            await cb.record_failure()
+
+        # timeout 미경과 시뮬레이션
+        with patch("src.agents.shared.llm_client.time") as mock_time:
+            mock_time.time.return_value = cb._last_failure_time + 0.5  # 1.0s 미만
+            with pytest.raises(CircuitOpenError):
+                await cb.check()
+
+        assert cb.state == "open"

@@ -23,6 +23,9 @@ from __future__ import annotations
 
 import contextvars
 import hashlib
+
+# langsmith 모듈 레벨 캐싱 — 매 호출마다 import 시도하지 않고 한 번만 검사
+import importlib.util as _importlib_util
 import time
 from abc import ABC, abstractmethod
 from typing import Any
@@ -40,9 +43,6 @@ from src.models.message import (
 )
 from src.utils.logger import get_agent_logger
 
-# langsmith 모듈 레벨 캐싱 — 매 호출마다 import 시도하지 않고 한 번만 검사
-import importlib.util as _importlib_util
-
 _HAS_LANGSMITH = _importlib_util.find_spec("langsmith") is not None
 if _HAS_LANGSMITH:
     from langsmith import traceable as _traceable  # type: ignore[import-untyped]
@@ -54,6 +54,10 @@ else:
 _active_ab_variant: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "active_ab_variant", default=None
 )
+
+
+class ContentBlockedError(Exception):
+    """AWS Bedrock 콘텐츠 정책에 의해 이미지 생성이 차단된 경우."""
 
 
 class BaseAgent(ABC):
@@ -73,6 +77,11 @@ class BaseAgent(ABC):
             async def process(self, state: AgentState) -> dict[str, Any]:
                 # 에이전트 로직 구현
                 return {"content_analysis": {...}}
+
+    [동시성 안전] 이 클래스의 인스턴스는 요청마다 새로 생성되어야 한다.
+    _llm_call_count, _last_input_snapshot, _last_output_snapshot 등의
+    mutable 상태가 요청별로 격리되려면 인스턴스가 공유되지 않아야 한다.
+    모듈 레벨 싱글톤으로 사용하지 마시오.
     """
 
     def __init__(
@@ -88,7 +97,7 @@ class BaseAgent(ABC):
             agent_name=name,
             model_override=model_override,
         )
-        # LLM 호출 횟수 추적 (audit용)
+        # [동시성] 요청별 인스턴스 전제 — 싱글톤 시 요청 간 카운터 섞임
         self._llm_call_count = 0
         # 프롬프트 로더 초기화 — YAML 파일에서 프롬프트를 로드한다
         self._prompt_loader = PromptLoader(base_dir=get_prompt_base_dir())
@@ -108,11 +117,12 @@ class BaseAgent(ABC):
         if self._ab_config is not None:
             self._preload_ab_variants()
 
-        # 현재 실행에서 선택된 A/B variant (Telemetry 추적용)
-        self._current_ab_variant: str | None = None
+        # A/B variant는 ContextVar(_active_ab_variant)로만 관리한다.
+        # 인스턴스 변수로 중복 저장하지 않는다 — 동시 요청 시 경합 방지.
 
-        # I/O 스냅샷 — 직전 실행의 입출력 기록 (모니터링용)
+        # [동시성] 요청별 인스턴스 전제 — 싱글톤 시 다른 요청 스냅샷으로 덮어쓰기됨
         self._last_input_snapshot: dict[str, Any] | None = None
+        # [동시성] 요청별 인스턴스 전제 — 싱글톤 시 다른 요청 결과로 덮어쓰기됨
         self._last_output_snapshot: dict[str, Any] | None = None
 
     # --- v8: 버전 해석 ---
@@ -187,7 +197,8 @@ class BaseAgent(ABC):
         """
         세션 ID 기반으로 A/B variant를 결정적으로 선택한다.
 
-        동일 session_id + agent_name → 항상 동일한 variant 반환.
+        MD5 해시로 session_id를 0-9999 범위 정수로 매핑하여 A/B 그룹을 결정한다.
+        동일 세션은 항상 동일 그룹에 배정되므로 사용자 경험의 일관성이 보장된다.
         hash 기반이므로 균등 분포에 가깝다.
 
         Args:
@@ -254,18 +265,34 @@ class BaseAgent(ABC):
         except PromptLoadError:
             return None
 
+    def _load_agent_config(self, defaults: dict[str, Any]) -> dict[str, Any]:
+        """settings.yaml에서 에이전트 설정을 로드하고 기본값과 병합한다.
+
+        각 에이전트의 _load_config()에서 반복되는 try/except + field extraction 패턴을
+        통합한다. 설정 로드 실패 시 defaults를 그대로 반환한다.
+
+        Args:
+            defaults: 기본값 dict (키: 설정명, 값: 기본값)
+
+        Returns:
+            settings.yaml 값이 병합된 설정 dict
+        """
+        try:
+            cfg = get_settings().get_agent_config(self.name)
+        except Exception:
+            cfg = {}
+        return {k: cfg.get(k, v) for k, v in defaults.items()}
+
     def _resolve_mode(self) -> str:
         """
         에이전트가 속한 모드를 추론한다.
 
-        모듈 경로를 검사하여 podcast/conversation/shared를 판별한다.
+        모듈 경로를 검사하여 podcast/shared를 판별한다.
         판별 불가 시 "shared"를 기본값으로 반환한다.
         """
         module = type(self).__module__ or ""
         if ".podcast." in module or "podcast" in module:
             return "podcast"
-        elif ".conversation." in module or "conversation" in module:
-            return "conversation"
         return "shared"
 
     @property
@@ -280,13 +307,12 @@ class BaseAgent(ABC):
 
     @property
     def ab_variant(self) -> str | None:
-        """
-        현재 실행에서 선택된 A/B variant를 반환한다.
+        """현재 실행에서 선택된 A/B variant를 반환한다.
 
+        ContextVar에서 읽으므로 동시 요청 간 안전하다.
         A/B 테스트가 비활성이면 None.
-        Telemetry에서 어떤 variant로 실행되었는지 추적할 때 사용한다.
         """
-        return self._current_ab_variant
+        return _active_ab_variant.get()
 
     def get_prompt(self, key: str = "system_prompt") -> str:
         """
@@ -341,6 +367,17 @@ class BaseAgent(ABC):
         """
         ...
 
+    def get_fallback_output(self, state: AgentState) -> dict[str, Any]:
+        """
+        process() 실패 시 반환할 최소 fallback dict.
+
+        기본 구현은 빈 dict를 반환한다.
+        필요한 에이전트만 오버라이드하여 의미 있는 기본값을 제공할 수 있다.
+
+        이 메서드는 abstractmethod가 아니다 — 오버라이드는 선택사항이다.
+        """
+        return {}
+
     async def __call__(self, state: AgentState) -> dict[str, Any]:
         """
         LangGraph 노드 함수로 사용하기 위한 호출 인터페이스.
@@ -358,7 +395,6 @@ class BaseAgent(ABC):
         if self._ab_config is not None and self._ab_prompts:
             session_id = state.get("session_id", "unknown")
             variant = self._resolve_ab_variant(str(session_id))
-            self._current_ab_variant = variant
             token = _active_ab_variant.set(variant)
             ab_label = f" [A/B: {variant}]"
 
@@ -405,10 +441,11 @@ class BaseAgent(ABC):
             # contextvars 정리 — 이전 값으로 복원
             if token is not None:
                 _active_ab_variant.reset(token)
-                self._current_ab_variant = None
 
     async def _traced_process(
-        self, state: AgentState, tier_label: str,
+        self,
+        state: AgentState,
+        tier_label: str,
     ) -> dict[str, Any]:
         """
         LangSmith 트레이싱으로 감싼 process() 실행.
@@ -433,14 +470,14 @@ class BaseAgent(ABC):
                 "agent_name": self.name,
                 "tier": self.tier,
                 "prompt_version": self._prompt_version,
-                "ab_variant": self._current_ab_variant,
+                "ab_variant": _active_ab_variant.get(),
                 "model_id": self.llm_client.model_id,
             },
         )
         async def _run(s: AgentState) -> dict[str, Any]:
             return await self.process(s)
 
-        return await _run(state)
+        return await _run(state)  # type: ignore[no-any-return]
 
     async def _traced_llm_call(
         self,
@@ -494,7 +531,8 @@ class BaseAgent(ABC):
                 **kwargs,
             )
             usage = self.llm_client.last_usage or {}
-            return {
+            call_meta = self.llm_client.last_call_metadata
+            result_dict: dict[str, Any] = {
                 "text": text,
                 "usage_metadata": {
                     "input_tokens": usage.get("input_tokens", 0),
@@ -502,6 +540,13 @@ class BaseAgent(ABC):
                     "total_tokens": usage.get("total_tokens", 0),
                 },
             }
+            if call_meta:
+                result_dict["metadata"] = {
+                    "sem_wait_ms": call_meta.get("sem_wait_ms", 0),
+                    "bedrock_call_ms": call_meta.get("bedrock_call_ms", 0),
+                    "request_id": call_meta.get("request_id", ""),
+                }
+            return result_dict
 
         result = await _llm_run(
             messages=[
@@ -525,11 +570,28 @@ class BaseAgent(ABC):
         audit.llm_calls가 자동으로 집계된다.
         """
         self._llm_call_count += 1
-        return await self._traced_llm_call(
-            system_prompt=system_prompt,
-            user_message=user_message,
-            **kwargs,
-        )
+        call_num = self._llm_call_count
+        _start = time.monotonic()
+        try:
+            result = await self._traced_llm_call(
+                system_prompt=system_prompt,
+                user_message=user_message,
+                **kwargs,
+            )
+            _elapsed_ms = int((time.monotonic() - _start) * 1000)
+            _usage = self.llm_client.last_usage or {}
+            self.logger.info(
+                "LLM 호출 #%d: %dms, input=%d, output=%d",
+                call_num,
+                _elapsed_ms,
+                _usage.get("input_tokens", 0),
+                _usage.get("output_tokens", 0),
+            )
+            return result
+        except Exception:
+            _elapsed_ms = int((time.monotonic() - _start) * 1000)
+            self.logger.warning("LLM 호출 #%d 실패: %dms", call_num, _elapsed_ms)
+            raise
 
     async def call_llm_json(
         self,
@@ -544,36 +606,141 @@ class BaseAgent(ABC):
         audit.llm_calls가 자동으로 집계된다.
         """
         self._llm_call_count += 1
-        raw_text = await self._traced_llm_call(
-            system_prompt=system_prompt,
-            user_message=user_message,
-            **kwargs,
-        )
-        return self.llm_client.parse_json_response(raw_text)
+        call_num = self._llm_call_count
+        _start = time.monotonic()
+        try:
+            raw_text = await self._traced_llm_call(
+                system_prompt=system_prompt,
+                user_message=user_message,
+                **kwargs,
+            )
+            _elapsed_ms = int((time.monotonic() - _start) * 1000)
+            _usage = self.llm_client.last_usage or {}
+            self.logger.info(
+                "LLM 호출 #%d: %dms, input=%d, output=%d",
+                call_num,
+                _elapsed_ms,
+                _usage.get("input_tokens", 0),
+                _usage.get("output_tokens", 0),
+            )
+            return self.llm_client.parse_json_response(raw_text)
+        except Exception:
+            _elapsed_ms = int((time.monotonic() - _start) * 1000)
+            self.logger.warning("LLM 호출 #%d 실패: %dms", call_num, _elapsed_ms)
+            raise
 
     async def call_image_gen(
         self,
         prompt: str,
-        model: str = "dall-e-3",
+        model: str | None = None,
         size: str = "1024x1024",
         quality: str = "standard",
     ) -> dict[str, Any]:
         """
-        이미지 생성 API를 호출하고 로컬에 저장한다.
+        이미지 생성 API를 호출한다.
 
         Visualization Agent에서 사용한다.
-        LLM 프로바이더와 무관하게 항상 OpenAI Images API를 통해 이미지를 생성한다.
-        생성된 이미지는 data/outputs/images/ 폴더에 PNG로 저장된다.
+        model이 amazon.* 이면 Bedrock, 아니면 OpenAI Images API를 사용한다.
+        model이 None이면 settings.yaml의 에이전트별 image_model 설정을 사용한다.
 
         Args:
             prompt: 이미지 생성 프롬프트 (영문 권장)
-            model: 이미지 모델 (기본: dall-e-3)
-            size: 이미지 크기 (기본: 1024x1024)
+            model: 이미지 모델 (None이면 settings에서 조회, amazon.*이면 Bedrock)
+            size: 이미지 크기 (기본: 1024x1024, OpenAI 전용)
             quality: 이미지 품질 (standard / hd)
 
         Returns:
-            {"url": "임시 URL", "local_path": "로컬 저장 경로"} 형태의 dict
+            Bedrock: {"image_binary": bytes} 형태의 dict
+            OpenAI: {"url": "임시 URL", "local_path": "로컬 저장 경로"} 형태의 dict
         """
+        if model is None:
+            from config.loader import get_settings
+
+            agent_config = get_settings().get_agent_config(self.name)
+            model = agent_config.get("image_model", "dall-e-3")
+
+        if model.startswith("amazon."):
+            return await self._generate_image_bedrock(prompt, model, quality)
+        else:
+            return await self._generate_image_openai(prompt, model, size, quality)
+
+    async def _generate_image_bedrock(
+        self,
+        prompt: str,
+        model: str,
+        quality: str = "standard",
+    ) -> dict[str, Any]:
+        """
+        AWS Bedrock 이미지 생성 (Titan Image Generator).
+
+        이미지 모델은 Converse API 미지원이므로 invoke_model을 사용한다.
+        리전은 settings.yaml의 에이전트별 image_region 설정을 사용한다.
+        """
+        import asyncio
+        import base64
+        import json
+
+        import boto3  # type: ignore
+
+        from config.loader import get_settings
+
+        settings = get_settings()
+        agent_config = settings.get_agent_config(self.name)
+        image_region = agent_config.get("image_region", "us-east-1")
+
+        bedrock_client = boto3.client("bedrock-runtime", region_name=image_region)
+
+        request_body = json.dumps(
+            {
+                "taskType": "TEXT_IMAGE",
+                "textToImageParams": {"text": prompt},
+                "imageGenerationConfig": {
+                    "numberOfImages": 1,
+                    "quality": quality,
+                    "cfgScale": 8.0,
+                    "height": 1024,
+                    "width": 1024,
+                },
+            }
+        )
+
+        from botocore.exceptions import ClientError  # type: ignore
+
+        try:
+            response = await asyncio.to_thread(
+                bedrock_client.invoke_model,
+                modelId=model,
+                body=request_body,
+                contentType="application/json",
+                accept="application/json",
+            )
+        except ClientError as e:
+            error_code = e.response["Error"]["Code"]
+            error_msg = e.response["Error"]["Message"]
+            if error_code == "ValidationException" and "blocked" in error_msg.lower():
+                raise ContentBlockedError(error_msg) from e
+            raise
+
+        response_body = json.loads(response["body"].read())
+
+        images = response_body.get("images", [])
+        if not images:
+            raise ContentBlockedError(
+                response_body.get("error", "이미지가 AWS 콘텐츠 정책에 의해 차단되었습니다")
+            )
+
+        image_binary = base64.b64decode(images[0])
+        self.logger.info("Bedrock 이미지 생성 완료: model=%s, region=%s", model, image_region)
+        return {"image_binary": image_binary}
+
+    async def _generate_image_openai(
+        self,
+        prompt: str,
+        model: str,
+        size: str = "1024x1024",
+        quality: str = "standard",
+    ) -> dict[str, Any]:
+        """OpenAI Images API를 통한 이미지 생성. 기존 로직 보존."""
         import os
         from pathlib import Path
 
@@ -584,7 +751,7 @@ class BaseAgent(ABC):
             api_key=os.getenv("OPENAI_API_KEY"),
         )
 
-        response = await client.images.generate(
+        response = await client.images.generate(  # type: ignore[call-overload]
             model=model,
             prompt=prompt,
             size=size,
@@ -637,7 +804,7 @@ class BaseAgent(ABC):
             message_type: 메시지 유형 (request, response 등)
             payload: 요청/응답 데이터
             session_id: 세션 ID
-            mode: 실행 모드 (conversation / podcast)
+            mode: 실행 모드 (podcast)
             priority: 메시지 우선순위
 
         Returns:
@@ -651,7 +818,7 @@ class BaseAgent(ABC):
             metadata=MessageMetadata(
                 session_id=session_id,
                 mode=mode,  # type: ignore[arg-type]
-                interaction_unit="episode" if mode == "podcast" else "turn",
+                interaction_unit="episode",
                 tier=self.tier,
                 priority=priority,
             ),
@@ -680,7 +847,7 @@ class BaseAgent(ABC):
             "agent_name": self.name,
             "tier": self.tier,
             "prompt_version": self._prompt_version,
-            "ab_variant": self._current_ab_variant,
+            "ab_variant": _active_ab_variant.get(),
             "llm_call_count": self._llm_call_count,
             "token_usage": self.llm_client.last_usage,
             "total_token_usage": self.llm_client.total_usage,

@@ -6,27 +6,26 @@
 
 ---
 
-## 듀얼모드 아키텍처
+## 아키텍처
 
-Mind-Log는 두 가지 모드를 지원하는 멀티에이전트 시스템입니다.
-
-| 항목 | 대화모드 | 팟캐스트모드 |
-|-----|---------|------------|
-| 에이전트 | 13개 전용 | 7개 전용 |
-| 처리 방식 | 실시간 스트리밍 | 배치 처리 |
-| 출력 형식 | 자유로운 텍스트 | 구조화된 스크립트 |
-| 응답 시간 | ~5-10초 | ~18-20초 |
+Mind-Log는 TIER 기반 멀티에이전트 시스템으로 팟캐스트 에피소드를 생성합니다.
 
 ### TIER 기반 파이프라인
 
 ```
-TIER 0: Intent Classifier → 의도 분류 + 모드 감지
-TIER 1 (병렬 Fan-out): Safety + Emotion + Context/ContentAnalyzer + Reasoning/PodcastReasoning
-TIER 2 (생성): Synthesis / Script Generator (+Visualization 병렬)
-TIER 3 (검증): Validator / Batch Validator (실패 시 TIER 2 재시도, 최대 2회)
-TIER 4 (후처리): Personalization / Script Personalizer
-비동기: Visualization + Telemetry + Learning
+TIER 0: Intent Classifier → 의도 분류 + 1차 위기 감지
+TIER 1 (병렬 Fan-out): Safety + Emotion + Content Analyzer + Podcast Reasoning
+TIER 2 (생성): Script Generator + Visualization (병렬)
+TIER 3 (검증): Batch Validator (실패 시 TIER 2 재시도, 최대 2회)
+TIER 4 (후처리): Script Personalizer
+비동기: Learning Agent
 ```
+
+| 항목 | 내용 |
+|-----|------|
+| 에이전트 | 11개 + Learning |
+| 처리 방식 | TIER 병렬 + 배치 처리 |
+| 출력 형식 | 구조화된 팟캐스트 스크립트 |
 
 ---
 
@@ -39,7 +38,7 @@ TIER 4 (후처리): Personalization / Script Personalizer
 | 벡터 DB | Pinecone |
 | 관계형 DB | MySQL |
 | 그래프 DB | Neo4j |
-| 캐시 | Redis |
+| 캐시 | Redis (선택적 — Intent Classifier 캐싱용, 기본 비활성) |
 | 이미지 저장 | S3 / CDN |
 | 프레임워크 | FastAPI + Uvicorn |
 | CI/CD | GitHub Actions |
@@ -76,15 +75,17 @@ pytest tests/
 mind-log/
 ├── src/
 │   ├── agents/           # 에이전트 구현
-│   │   ├── conversation/ # 대화모드 에이전트 (13개)
-│   │   ├── podcast/      # 팟캐스트모드 에이전트 (7개)
-│   │   └── shared/       # 공용 에이전트 유틸리티
+│   │   ├── podcast/      # 팟캐스트 에이전트 (11개 + Learning)
+│   │   └── shared/       # 공용 인프라 (BaseAgent, LLMClient 등)
 │   ├── models/           # AgentState, AgentMessage 스키마
-│   ├── api/              # 백엔드 API 클라이언트
+│   ├── api/              # FastAPI 라우트 + 백엔드 API 클라이언트
 │   ├── graph/            # LangGraph 워크플로우 정의
+│   ├── monitoring/       # 콜백, 메트릭, 토큰 사용량 추적
+│   ├── db/               # DB 연결 유틸리티
 │   └── utils/            # 공통 유틸리티
-├── config/               # 환경 설정 파일
-├── tests/                # 테스트 코드
+├── config/               # 환경 설정 파일 (settings.yaml)
+├── prompts/              # 에이전트 프롬프트 YAML (멀티버전)
+├── tests/                # 테스트 코드 (563 passed, live 제외 기준)
 ├── docs/                 # 프로젝트 문서
 └── CLAUDE.md             # AI 개발 가이드 (아키텍처 + 협업 규칙)
 ```
@@ -96,24 +97,27 @@ mind-log/
 | 문서 | 설명 |
 |------|------|
 | [CLAUDE.md](CLAUDE.md) | 아키텍처 + 협업 규칙 + API 규약 통합 가이드 |
-| [docs/architecture/PROJECT_STRUCTURE.md](docs/architecture/PROJECT_STRUCTURE.md) | 폴더 구조 및 파일 역할 상세 |
-| [docs/guides/GIT_WORKFLOW.md](docs/guides/GIT_WORKFLOW.md) | 브랜치 전략, 커밋 컨벤션, PR 가이드 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 브랜치 전략, 커밋 컨벤션, PR 가이드, 담당 에이전트 배분, Protected Files |
 | [docs/getting-started/QUICK_START.md](docs/getting-started/QUICK_START.md) | 환경 설정 및 첫 에이전트 개발 가이드 |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | 기여 가이드 및 코드 리뷰 규칙 |
+| [docs/architecture/AGENT_ROLES.md](docs/architecture/AGENT_ROLES.md) | 에이전트별 역할·입출력·이슈 정의서 |
+| [docs/architecture/API_SPEC.md](docs/architecture/API_SPEC.md) | REST API 명세 인덱스 |
 
 ---
 
 ## 팀 구성
 
-| 개발자 | 대화모드 에이전트 | 팟캐스트모드 에이전트 |
-|--------|-----------------|---------------------|
-| 개발자1 | Intent Classifier, Knowledge, Synthesis, Personalization | Script Generator, Script Personalizer |
-| 개발자2 | Safety, Memory, Visualization, Emotion | Episode Memory, Visualization(Podcast) |
-| 개발자3 | Reasoning, Context, Validator, Learning | Podcast Reasoning, Content Analyzer, Batch Validator |
-| 미정 | Telemetry Agent | — (전체 에이전트 완료 후 예정) |
+| 개발자 | 담당 에이전트 |
+|--------|-------------|
+| 개발자1 | Intent Classifier, Knowledge, Script Generator, Script Personalizer |
+| 개발자2 | Safety, Emotion, Visualization, Episode Memory |
+| 개발자3 | Podcast Reasoning, Content Analyzer, Batch Validator, Learning |
 
 ---
 
 ## 라이선스
 
 MIT License
+
+---
+
+*마지막 업데이트: 2026-04-14 11:00*

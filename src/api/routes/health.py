@@ -15,18 +15,21 @@ router = APIRouter()
 
 class HealthResponse(BaseModel):
     """기본 Health 응답"""
+
     status: str = "ok"
 
 
 class ReadyResponse(BaseModel):
     """Ready(준비됨) 응답"""
+
     status: str = "ready"
     components: dict[str, str]
     storage_mode: str = "local"
 
 
+@router.get("/", response_model=HealthResponse, include_in_schema=False)
 @router.get("/health", response_model=HealthResponse)
-async def health_check():
+async def health_check() -> HealthResponse:
     """
     ALB 헬스체크용 엔드포인트.
     애플리케이션이 실행 중인지(200 OK)만 확인한다.
@@ -35,7 +38,7 @@ async def health_check():
 
 
 @router.get("/health/ready", response_model=ReadyResponse)
-async def ready_check():
+async def ready_check() -> ReadyResponse:
     """
     심층 상태 점검 (Docker 컨테이너 Readiness Probe).
 
@@ -55,6 +58,7 @@ async def ready_check():
 
     # STORAGE_MODE 정보 포함 (Zone D: 현재 저장소 모드 확인용)
     from config.loader import get_settings
+
     settings = get_settings()
     storage_mode = getattr(settings, "storage_mode", "local")
 

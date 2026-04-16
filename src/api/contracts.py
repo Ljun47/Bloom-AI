@@ -10,7 +10,7 @@ API 모델은 변경될 수 있으므로 유연하게 설계한다.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -20,17 +20,26 @@ class SaveRequest(BaseModel):
 
     user_id: str  # 사용자 고유 ID
     session_id: str  # 세션 고유 ID
-    type: str  # 데이터 유형 (conversation, emotion_log, memory, visualization, learning 등)
+    # 데이터 유형 (podcast_episode, emotion_log,
+    # visualization, learning, content_analysis 등)
+    type: str
     data: dict[str, Any]  # 저장할 데이터
     timestamp: datetime  # 데이터 생성 시각
 
 
 class SaveResponse(BaseModel):
-    """데이터 저장 응답 스키마."""
+    """데이터 저장 응답 스키마.
 
-    success: bool  # 성공 여부
-    id: str | None = None  # 생성된 리소스 ID
-    message: str | None = None  # 응답 메시지
+    백엔드 API 응답 형식 변경 대응:
+    - 이전: {'success': True, 'id': '...', 'message': '...'}
+    - 현재: {'code': 'ok', 'message': '성공'}
+    두 형식 모두 수용하도록 유연하게 설계.
+    """
+
+    success: Optional[bool] = None  # 성공 여부 (선택, 백엔드 형식 변경 대응)
+    code: Optional[str] = None  # 응답 코드 ('ok', 'error' 등)
+    id: Optional[str] = None  # 생성된 리소스 ID
+    message: Optional[str] = None  # 응답 메시지
 
 
 class LoadResponse(BaseModel):
@@ -62,3 +71,16 @@ class ErrorResponse(BaseModel):
 
     success: Literal[False] = False  # 항상 False
     error: ErrorDetail  # 에러 상세
+
+
+class GraphCumulativeData(BaseModel):
+    """GET /api/v1/graph_nodes 응답의 누적 그래프 데이터.
+
+    Backend 응답 구조: {"code": "ok", "data": {"data": <이 모델>}}
+
+    신규 사용자(404): BackendClient.load_graph_cumulative()가 GraphCumulativeData()를 반환.
+    에러(5xx 등): BackendClient가 None을 반환하여 404와 완전히 구분.
+    """
+
+    nodes: list[dict[str, Any]] = Field(default_factory=list)
+    links: list[dict[str, Any]] = Field(default_factory=list)

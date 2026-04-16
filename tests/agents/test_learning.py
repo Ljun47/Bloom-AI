@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.agents.shared.learning import LearningAgent
+from src.agents.podcast.learning import LearningAgent
 from src.models.agent_state import AgentState
 
 # === 픽스처 ===
@@ -95,33 +95,6 @@ async def test_process_returns_empty_and_saves(
     assert save_request.data["mode"] == "podcast"
 
 
-@pytest.mark.asyncio
-async def test_process_with_conversation_mode(
-    agent: LearningAgent,
-    mock_learning_data: dict[str, Any],
-) -> None:
-    """mode='conversation'에서도 정상 동작한다."""
-    state = AgentState(
-        user_input="오늘 정말 힘든 하루였어요.",
-        user_id="conv_user_001",
-        session_id="sess_conv_001",
-        mode="conversation",
-        emotion_vectors={"primary_emotion": "tired", "intensity": 0.6},
-        final_output="힘든 하루를 보내셨군요.",
-    )
-    mock_save = AsyncMock()
-    with (
-        patch.object(
-            agent, "call_llm_json", new_callable=AsyncMock, return_value=mock_learning_data
-        ),
-        patch.object(agent._api_client, "save", mock_save),
-    ):
-        result = await agent.process(state)
-
-    assert result == {}
-    assert mock_save.call_args.args[1].data["mode"] == "conversation"
-
-
 # === 컨텍스트 조합 테스트 ===
 
 
@@ -161,9 +134,7 @@ def test_build_context(
     expected_not_in: list[str],
 ) -> None:
     """상태 필드 조합에 따라 학습 컨텍스트가 올바르게 생성된다."""
-    state = AgentState(
-        user_id="u", session_id="s", mode="podcast", **state_kwargs
-    )
+    state = AgentState(user_id="u", session_id="s", mode="podcast", **state_kwargs)
     context = agent._build_learning_context(state)
 
     for text in expected_in:
@@ -172,21 +143,28 @@ def test_build_context(
         assert text not in context
 
 
-def test_build_context_minimal_returns_default(agent: LearningAgent) -> None:
-    """최소 필드 상태에서 기본 메시지를 반환한다."""
-    state = AgentState(user_input="", user_id="u", session_id="s", mode="podcast")
-    assert agent._build_learning_context(state) == "세션 데이터가 부족합니다."
-
-
-def test_build_context_truncates_long_output(agent: LearningAgent) -> None:
-    """final_output이 500자를 초과하면 잘린다."""
-    state = AgentState(
-        user_input="테스트", user_id="u", session_id="s",
-        mode="podcast", final_output="A" * 1000,
-    )
-    context = agent._build_learning_context(state)
-    assert "..." in context
-    assert "A" * 500 in context
+@pytest.mark.parametrize(
+    "state_kwargs, check",
+    [
+        (
+            {"user_input": ""},
+            lambda ctx: ctx == "세션 데이터가 부족합니다.",
+        ),
+        (
+            {"user_input": "테스트", "final_output": "A" * 1000},
+            lambda ctx: "..." in ctx and "A" * 500 in ctx,
+        ),
+    ],
+    ids=["minimal_returns_default", "truncates_long_output"],
+)
+def test_build_context_edge_cases(
+    agent: LearningAgent,
+    state_kwargs: dict,
+    check,
+) -> None:
+    """최소 필드 → 기본 메시지, 긴 출력 → truncation."""
+    state = AgentState(user_id="u", session_id="s", mode="podcast", **state_kwargs)
+    assert check(agent._build_learning_context(state))
 
 
 # === 에러 처리 테스트 ===
@@ -210,8 +188,10 @@ async def test_api_save_failure_does_not_raise(
             agent, "call_llm_json", new_callable=AsyncMock, return_value=mock_learning_data
         ),
         patch.object(
-            agent._api_client, "save",
-            new_callable=AsyncMock, side_effect=error_cls("저장 실패"),
+            agent._api_client,
+            "save",
+            new_callable=AsyncMock,
+            side_effect=error_cls("저장 실패"),
         ),
     ):
         result = await agent.process(full_state)

@@ -21,13 +21,86 @@ API 모델이 변경되어도 이 파일과 설정 파일만 수정하면 된다
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import re
+import time
 from typing import Any
 
 import anthropic
 
 from config.loader import get_settings
+from src.utils.logger import get_agent_logger
+
+_cb_logger = get_agent_logger("llm_client")
+
+
+class CircuitOpenError(Exception):
+    """Circuit Breaker가 OPEN 상태일 때 발생."""
+
+
+class _CircuitBreaker:
+    """LLM 프로바이더별 Circuit Breaker 상태 머신.
+
+    상태 전이:
+        CLOSED → (fail_max 연속 실패) → OPEN
+        OPEN → (reset_timeout 경과) → HALF_OPEN
+        HALF_OPEN → (1회 성공) → CLOSED
+        HALF_OPEN → (1회 실패) → OPEN
+
+    동시성 안전: asyncio.Lock으로 상태 전이를 보호한다.
+    실패 카운팅: retry 전체 실패 = 1회 카운트 (retry 개별 실패가 아님).
+    """
+
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+    def __init__(self, fail_max: int = 5, reset_timeout: float = 30.0) -> None:
+        self._state = self.CLOSED
+        self._failure_count = 0
+        self._fail_max = fail_max
+        self._reset_timeout = reset_timeout
+        self._last_failure_time = 0.0
+        self._lock = asyncio.Lock()
+
+    @property
+    def state(self) -> str:
+        """현재 상태를 반환한다."""
+        return self._state
+
+    async def check(self) -> None:
+        """OPEN 상태면 CircuitOpenError를 발생시킨다."""
+        async with self._lock:
+            if self._state == self.OPEN:
+                if time.time() - self._last_failure_time >= self._reset_timeout:
+                    self._state = self.HALF_OPEN
+                    _cb_logger.info("[CircuitBreaker] OPEN → HALF_OPEN 전환")
+                else:
+                    raise CircuitOpenError(f"Circuit OPEN — {self._reset_timeout}s 대기 중")
+
+    async def record_success(self) -> None:
+        """성공 기록 — HALF_OPEN이면 CLOSED로 복구."""
+        async with self._lock:
+            if self._state == self.HALF_OPEN:
+                _cb_logger.info("[CircuitBreaker] HALF_OPEN → CLOSED 복구")
+            self._failure_count = 0
+            self._state = self.CLOSED
+
+    async def record_failure(self) -> None:
+        """실패 기록 — fail_max 초과 시 OPEN 전환."""
+        async with self._lock:
+            self._failure_count += 1
+            self._last_failure_time = time.time()
+            if self._failure_count >= self._fail_max:
+                old = self._state
+                self._state = self.OPEN
+                _cb_logger.warning(
+                    "[CircuitBreaker] %s → OPEN (연속 실패 %d회)",
+                    old,
+                    self._failure_count,
+                )
 
 
 class LLMClient:
@@ -55,10 +128,32 @@ class LLMClient:
 
         # Bedrock 명시 사용
         client = LLMClient(agent_name="content_analyzer", provider_override="bedrock")
+
+    [동시성 안전] 이 클래스의 인스턴스는 BaseAgent와 함께 요청마다 새로 생성된다.
+    _last_usage, _total_usage 등의 mutable 상태가 요청별로 격리되려면
+    인스턴스가 공유되지 않아야 한다.
     """
 
-    # 외부 프로바이더 레지스트리 — register_provider()로 등록 (로컬 개발 전용)
+    # [동시성] 클래스 변수 — 앱 부트스트랩 시에만 등록, 런타임 요청 중 변경 금지
     _custom_providers: dict[str, type] = {}
+
+    # [동시성] 프로바이더별 Circuit Breaker — 인스턴스 간 공유
+    _breakers: dict[str, _CircuitBreaker] = {}
+
+    # [동시성] Bedrock 동시 호출 상한 — 인스턴스 간 공유 Semaphore
+    # 첫 Bedrock 클라이언트 초기화 시 settings.llm.bedrock.concurrency_limit으로 설정
+    _bedrock_semaphore: asyncio.Semaphore | None = None
+
+    @classmethod
+    def _get_breaker(cls, provider: str) -> _CircuitBreaker:
+        """프로바이더별 Circuit Breaker 인스턴스를 반환한다."""
+        if provider not in cls._breakers:
+            cfg = get_settings().circuit_breaker_config
+            cls._breakers[provider] = _CircuitBreaker(
+                fail_max=int(cfg.get("fail_max", 5)),
+                reset_timeout=float(cfg.get("reset_timeout", 30)),
+            )
+        return cls._breakers[provider]
 
     @classmethod
     def register_provider(cls, name: str, provider_class: type) -> None:
@@ -114,9 +209,7 @@ class LLMClient:
         elif self._provider == "openai":
             import openai
 
-            self._openai_client = openai.AsyncOpenAI(
-                api_key=os.getenv("OPENAI_API_KEY", "dummy-key-for-tests")
-            )
+            self._openai_client = openai.AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
             # OpenAI 전용 모델 ID — agent_config.model_id는 Anthropic 직접 API ID이므로
             # OpenAI에서는 반드시 get_openai_model_id()를 사용해야 한다.
             model_key = agent_config.get("model", "sonnet")
@@ -132,9 +225,16 @@ class LLMClient:
         self._max_tokens: int = agent_config.get("max_tokens", 4096)
         self._temperature: float = agent_config.get("temperature", 0.7)
 
-        # 토큰 사용량 추적 — 직전 LLM 호출의 토큰 수를 저장한다
+        # 프롬프트 캐싱 설정 (Bedrock cachePoint / Anthropic cache_control)
+        caching_cfg = settings.prompt_caching_config
+        self._prompt_caching_enabled: bool = bool(caching_cfg.get("enabled", True))
+        self._prompt_caching_min_tokens: int = int(caching_cfg.get("min_tokens", 1024))
+
+        # [동시성] 요청별 인스턴스 전제 — 싱글톤 시 다른 요청 토큰 수로 덮어쓰기됨
         self._last_usage: dict[str, int] | None = None
-        # 누적 토큰 사용량 — 이 클라이언트 인스턴스의 전체 토큰 합산
+        # Bedrock 호출 세부 메타데이터 (지연 구간 추적용)
+        self._last_call_metadata: dict[str, Any] = {}
+        # [동시성] 요청별 인스턴스 전제 — 싱글톤 시 += 연산이 비원자적이라 값 유실
         self._total_usage: dict[str, int] = {
             "input_tokens": 0,
             "output_tokens": 0,
@@ -191,6 +291,11 @@ class LLMClient:
 
         self._bedrock_client = boto3.client(**kwargs)
 
+        # Semaphore 초기화 — 클래스당 1회, 동시 Bedrock 호출 상한 설정
+        if LLMClient._bedrock_semaphore is None:
+            limit = bedrock_config.get("concurrency_limit", 10)
+            LLMClient._bedrock_semaphore = asyncio.Semaphore(int(limit))
+
     @property
     def model_id(self) -> str:
         """현재 사용 중인 모델 ID."""
@@ -205,10 +310,21 @@ class LLMClient:
     def last_usage(self) -> dict[str, int] | None:
         """직전 LLM 호출의 토큰 사용량을 반환한다.
 
+        내부 상태 보호를 위해 복사본을 반환한다.
+
         Returns:
             {"input_tokens": N, "output_tokens": N, "total_tokens": N} 또는 None
         """
-        return self._last_usage
+        return self._last_usage.copy() if self._last_usage is not None else None
+
+    @property
+    def last_call_metadata(self) -> dict[str, Any]:
+        """직전 LLM 호출의 세부 메타데이터를 반환한다.
+
+        Bedrock 호출 시: sem_wait_ms, bedrock_call_ms, request_id 포함.
+        다른 프로바이더는 빈 dict.
+        """
+        return self._last_call_metadata.copy()
 
     @property
     def total_usage(self) -> dict[str, int]:
@@ -223,17 +339,35 @@ class LLMClient:
             "total_tokens": 0,
         }
 
-    def _record_usage(self, input_tokens: int, output_tokens: int) -> None:
-        """토큰 사용량을 기록한다 (직전 + 누적)."""
+    def _record_usage(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
+    ) -> None:
+        """토큰 사용량을 기록한다 (직전 + 누적).
+
+        cache_read_tokens: 캐시 히트 토큰 (Bedrock cacheReadInputTokens)
+        cache_write_tokens: 캐시 저장 토큰 (Bedrock cacheWriteInputTokens)
+        """
         total = input_tokens + output_tokens
         self._last_usage = {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "total_tokens": total,
+            "cache_read_tokens": cache_read_tokens,
+            "cache_write_tokens": cache_write_tokens,
         }
         self._total_usage["input_tokens"] += input_tokens
         self._total_usage["output_tokens"] += output_tokens
         self._total_usage["total_tokens"] += total
+        self._total_usage["cache_read_tokens"] = (
+            self._total_usage.get("cache_read_tokens", 0) + cache_read_tokens
+        )
+        self._total_usage["cache_write_tokens"] = (
+            self._total_usage.get("cache_write_tokens", 0) + cache_write_tokens
+        )
 
     async def generate(
         self,
@@ -259,24 +393,81 @@ class LLMClient:
         actual_max_tokens = max_tokens or self._max_tokens
         actual_temperature = temperature or self._temperature
 
-        if self._provider in self._custom_providers:
-            # 커스텀 프로바이더 디스패치 (로컬 개발용)
-            result: str = await self._custom_provider_instance.generate(
-                system_prompt, user_message, actual_max_tokens, actual_temperature
+        # Circuit Breaker — OPEN 상태면 즉시 예외 발생
+        breaker = self._get_breaker(self._provider)
+        await breaker.check()
+
+        _start = time.monotonic()
+        _cb_logger.info(
+            "[LLM 호출 시작] provider=%s, model=%s",
+            self._provider,
+            self._model_id,
+        )
+
+        try:
+            if self._provider in self._custom_providers:
+                result: str = await self._custom_provider_instance.generate(
+                    system_prompt, user_message, actual_max_tokens, actual_temperature
+                )
+            elif self._provider == "bedrock":
+                result = await self._generate_bedrock(
+                    system_prompt, user_message, actual_max_tokens, actual_temperature
+                )
+            elif self._provider == "openai":
+                result = await self._generate_openai(
+                    system_prompt, user_message, actual_max_tokens, actual_temperature
+                )
+            else:
+                result = await self._generate_anthropic(
+                    system_prompt, user_message, actual_max_tokens, actual_temperature
+                )
+        except CircuitOpenError:
+            raise
+        except Exception as e:
+            _elapsed_ms = int((time.monotonic() - _start) * 1000)
+            _cb_logger.error(
+                "[LLM 호출 실패] provider=%s, model=%s, latency=%dms, error=%s",
+                self._provider,
+                self._model_id,
+                _elapsed_ms,
+                type(e).__name__,
             )
-            return result
-        elif self._provider == "bedrock":
-            return await self._generate_bedrock(
-                system_prompt, user_message, actual_max_tokens, actual_temperature
-            )
-        elif self._provider == "openai":
-            return await self._generate_openai(
-                system_prompt, user_message, actual_max_tokens, actual_temperature
+            await breaker.record_failure()
+            raise
+
+        await breaker.record_success()
+        _elapsed_ms = int((time.monotonic() - _start) * 1000)
+        _usage = self._last_usage or {}
+        _call_meta = self._last_call_metadata
+        if self._provider == "bedrock" and _call_meta:
+            _cb_logger.info(
+                "[LLM 호출 완료] provider=%s, model=%s, latency=%dms, "
+                "bedrock_call=%dms, sem_wait=%dms, request_id=%s, "
+                "input_tokens=%d, output_tokens=%d, cache_read=%d, cache_write=%d",
+                self._provider,
+                self._model_id,
+                _elapsed_ms,
+                _call_meta.get("bedrock_call_ms", 0),
+                _call_meta.get("sem_wait_ms", 0),
+                _call_meta.get("request_id", "unknown"),
+                _usage.get("input_tokens", 0),
+                _usage.get("output_tokens", 0),
+                _usage.get("cache_read_tokens", 0),
+                _usage.get("cache_write_tokens", 0),
             )
         else:
-            return await self._generate_anthropic(
-                system_prompt, user_message, actual_max_tokens, actual_temperature
+            _cb_logger.info(
+                "[LLM 호출 완료] provider=%s, model=%s, latency=%dms, "
+                "input_tokens=%d, output_tokens=%d, cache_read=%d, cache_write=%d",
+                self._provider,
+                self._model_id,
+                _elapsed_ms,
+                _usage.get("input_tokens", 0),
+                _usage.get("output_tokens", 0),
+                _usage.get("cache_read_tokens", 0),
+                _usage.get("cache_write_tokens", 0),
             )
+        return result
 
     # temperature를 지원하지 않는 OpenAI 모델 접두사 (reasoning 계열)
     _OPENAI_NO_TEMPERATURE_PREFIXES = ("o1", "o3", "o4", "gpt-5")
@@ -307,7 +498,7 @@ class LLMClient:
                 input_tokens=response.usage.prompt_tokens or 0,
                 output_tokens=response.usage.completion_tokens or 0,
             )
-        return response.choices[0].message.content
+        return str(response.choices[0].message.content or "")
 
     async def _generate_anthropic(
         self,
@@ -317,20 +508,37 @@ class LLMClient:
         temperature: float,
     ) -> str:
         """Anthropic 직접 API를 통한 텍스트 생성."""
+        # 프롬프트 캐싱 — system_prompt 길이가 min_tokens 이상일 때 cache_control 추가
+        # 토큰 수는 정확히 계산할 수 없으므로 바이트 길이로 근사 (1 토큰 ≈ 4바이트)
+        use_cache = (
+            self._prompt_caching_enabled
+            and len(system_prompt.encode()) >= self._prompt_caching_min_tokens * 4
+        )
+        if use_cache:
+            system_param: Any = [
+                {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}
+            ]
+        else:
+            system_param = system_prompt
+
         response = await self._anthropic_client.messages.create(
             model=self._model_id,
             max_tokens=max_tokens,
             temperature=temperature,
-            system=system_prompt,
+            system=system_param,
             messages=[{"role": "user", "content": user_message}],
         )
-        # 토큰 사용량 기록
+        # 토큰 사용량 기록 (캐시 히트/저장 포함)
         self._record_usage(
             input_tokens=response.usage.input_tokens,
             output_tokens=response.usage.output_tokens,
+            cache_read_tokens=getattr(response.usage, "cache_read_input_tokens", 0) or 0,
+            cache_write_tokens=getattr(response.usage, "cache_creation_input_tokens", 0) or 0,
         )
         # 첫 번째 content block에서 텍스트 추출 (TextBlock 가정)
-        return response.content[0].text  # type: ignore[union-attr]
+        if not response.content:
+            raise ValueError("Anthropic API returned empty content")
+        return response.content[0].text  # type: ignore[union-attr, no-any-return]
 
     async def _generate_bedrock(
         self,
@@ -340,41 +548,157 @@ class LLMClient:
         temperature: float,
     ) -> str:
         """
-        AWS Bedrock을 통한 텍스트 생성.
+        AWS Bedrock Converse API를 통한 텍스트 생성.
 
-        Bedrock의 Anthropic Claude Messages API 형식을 사용한다.
-        boto3는 동기 클라이언트이므로 asyncio.to_thread로 감싸서 비동기 처리한다.
+        모든 Bedrock 모델(Claude, Llama, Titan, Mistral, Nova 등)에 통일된
+        요청/응답 포맷을 제공한다. boto3는 동기 클라이언트이므로
+        asyncio.to_thread로 감싸서 비동기 처리한다.
+
+        ThrottlingException / ServiceUnavailableException 발생 시
+        exponential backoff(1s→2s→4s)로 최대 3회 재시도한다.
         """
-        import asyncio
+        import botocore.exceptions  # type: ignore[import-untyped]
 
-        request_body = json.dumps(
-            {
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "system": system_prompt,
-                "messages": [{"role": "user", "content": user_message}],
-            }
+        settings = get_settings()
+        retry_cfg = settings.bedrock_config.get("retry", {})
+        max_attempts: int = int(retry_cfg.get("max_attempts", 3))
+        initial_backoff: float = float(retry_cfg.get("initial_backoff_seconds", 1))
+        max_backoff: float = float(retry_cfg.get("max_backoff_seconds", 8))
+
+        # 프롬프트 캐싱 — system_prompt가 min_tokens 이상일 때 cachePoint 추가
+        use_cache = (
+            self._prompt_caching_enabled
+            and len(system_prompt.encode()) >= self._prompt_caching_min_tokens * 4
         )
+        system_block: list[dict[str, Any]] = [{"text": system_prompt}]
+        if use_cache:
+            system_block.append({"cachePoint": {"type": "default"}})
 
-        # boto3는 동기 SDK — 이벤트루프 블로킹 방지를 위해 스레드풀에서 실행
-        response = await asyncio.to_thread(
-            self._bedrock_client.invoke_model,
-            modelId=self._model_id,
-            body=request_body,
-            contentType="application/json",
-            accept="application/json",
-        )
+        semaphore = LLMClient._bedrock_semaphore
 
-        # 응답 파싱 (strict=False: 제어 문자 허용)
-        response_body = json.loads(response["body"].read(), strict=False)
-        # 토큰 사용량 기록 (Bedrock Anthropic 응답 형식)
-        usage = response_body.get("usage", {})
+        async def _call() -> dict:
+            return await asyncio.to_thread(
+                self._bedrock_client.converse,
+                modelId=self._model_id,
+                messages=[{"role": "user", "content": [{"text": user_message}]}],
+                system=system_block,
+                inferenceConfig={"maxTokens": max_tokens, "temperature": temperature},
+            )
+
+        # Semaphore로 동시 호출 제한 (None이면 제한 없이 실행)
+        # sem_wait_ms: semaphore acquire 대기시간 측정
+        _sem_wait_ms = 0
+
+        async def _call_with_semaphore() -> dict:
+            nonlocal _sem_wait_ms
+            if semaphore is not None:
+                _sem_start = time.monotonic()
+                async with semaphore:
+                    _sem_wait_ms = int((time.monotonic() - _sem_start) * 1000)
+                    if _sem_wait_ms > 100:
+                        _cb_logger.warning(
+                            "[Bedrock] semaphore 대기 %dms — model=%s",
+                            _sem_wait_ms,
+                            self._model_id,
+                        )
+                    _bedrock_start = time.monotonic()
+                    result = await _call()
+                    return result
+            return await _call()
+
+        # ThrottlingException / ServiceUnavailableException → exponential backoff 재시도
+        last_error: Exception | None = None
+        backoff = initial_backoff
+        _bedrock_call_ms = 0
+        for attempt in range(max_attempts):
+            _attempt_start = time.monotonic()
+            try:
+                response = await _call_with_semaphore()
+                _bedrock_call_ms = int((time.monotonic() - _attempt_start) * 1000)
+                if attempt > 0:
+                    _cb_logger.info(
+                        "[Bedrock] 재시도 성공 — model=%s, attempt=%d/%d, attempt_ms=%d",
+                        self._model_id,
+                        attempt + 1,
+                        max_attempts,
+                        _bedrock_call_ms,
+                    )
+                break
+            except botocore.exceptions.ClientError as e:
+                _attempt_ms = int((time.monotonic() - _attempt_start) * 1000)
+                error_code = e.response.get("Error", {}).get("Code", "")
+                _err_request_id = e.response.get("ResponseMetadata", {}).get("RequestId", "unknown")
+                if error_code in ("ThrottlingException", "ServiceUnavailableException"):
+                    last_error = e
+                    wait_time = min(backoff, max_backoff)
+                    _cb_logger.warning(
+                        "[Bedrock] %s — model=%s, attempt=%d/%d, "
+                        "attempt_ms=%d, backoff=%.1fs, request_id=%s",
+                        error_code,
+                        self._model_id,
+                        attempt + 1,
+                        max_attempts,
+                        _attempt_ms,
+                        wait_time,
+                        _err_request_id,
+                    )
+                    if attempt < max_attempts - 1:
+                        await asyncio.sleep(wait_time)
+                        backoff *= 2
+                    continue
+                elif error_code == "ModelNotReadyException":
+                    last_error = e
+                    _cb_logger.warning(
+                        "[Bedrock] ModelNotReadyException — model=%s, "
+                        "attempt=%d/%d, attempt_ms=%d, backoff=5s, request_id=%s",
+                        self._model_id,
+                        attempt + 1,
+                        max_attempts,
+                        _attempt_ms,
+                        _err_request_id,
+                    )
+                    if attempt < max_attempts - 1:
+                        await asyncio.sleep(5)
+                    continue
+                elif error_code == "AccessDeniedException":
+                    raise RuntimeError(
+                        f"Bedrock AccessDenied — 모델 ID 또는 IAM 권한 확인 필요: {self._model_id}"
+                    ) from e
+                raise
+        else:
+            # 모든 재시도 소진
+            _cb_logger.error(
+                "[Bedrock] 재시도 소진 — model=%s, attempts=%d, last_error=%s",
+                self._model_id,
+                max_attempts,
+                last_error,
+            )
+            raise RuntimeError(
+                f"Bedrock 호출 {max_attempts}회 재시도 후 실패: {last_error}"
+            ) from last_error
+
+        # 통합 응답 구조 (모든 모델 동일)
+        text = response["output"]["message"]["content"][0]["text"]
+        usage = response.get("usage", {})
+
+        # ResponseMetadata 캡처 (지연 원인 추적 및 AWS Support 문의용)
+        _meta = response.get("ResponseMetadata", {})
+        _request_id = _meta.get("RequestId", "unknown")
+        self._last_call_metadata = {
+            "sem_wait_ms": _sem_wait_ms,
+            "bedrock_call_ms": _bedrock_call_ms,
+            "request_id": _request_id,
+            "http_status": _meta.get("HTTPStatusCode", 0),
+            "retry_count": attempt,
+        }
+
         self._record_usage(
-            input_tokens=usage.get("input_tokens", 0),
-            output_tokens=usage.get("output_tokens", 0),
+            input_tokens=usage.get("inputTokens", 0),
+            output_tokens=usage.get("outputTokens", 0),
+            cache_read_tokens=usage.get("cacheReadInputTokens", 0),
+            cache_write_tokens=usage.get("cacheWriteInputTokens", 0),
         )
-        return str(response_body["content"][0]["text"])
+        return str(text)
 
     async def generate_json(
         self,
@@ -434,5 +758,33 @@ class LLMClient:
 
         # strict=False: 로컬 LLM(Ollama 등)이 JSON 문자열 내에
         # 제어 문자(줄바꿈, 탭 등)를 포함할 수 있으므로 허용한다.
-        result: dict[str, Any] = json.loads(cleaned, strict=False)
-        return result
+        try:
+            result: dict[str, Any] = json.loads(cleaned, strict=False)
+            return result
+        except json.JSONDecodeError:
+            pass
+
+        # Fallback 1: 인라인 ```json { ... } ``` 마크다운 블록 내 JSON 추출
+        # (LLM이 설명 텍스트 중간에 코드블록을 삽입하는 경우 대응)
+        md_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", cleaned, re.DOTALL)
+        if md_match:
+            try:
+                result = json.loads(md_match.group(1), strict=False)
+                return result
+            except json.JSONDecodeError:
+                pass
+
+        # Fallback 2: LLM이 JSON 뒤에 추가 텍스트를 붙인 경우
+        # 첫 번째 '{' ~ 마지막 '}' 사이를 추출하여 재시도한다.
+        first_brace = cleaned.find("{")
+        last_brace = cleaned.rfind("}")
+        if first_brace != -1 and last_brace > first_brace:
+            json_candidate = cleaned[first_brace : last_brace + 1]
+            result = json.loads(json_candidate, strict=False)
+            return result
+
+        raise json.JSONDecodeError(
+            "JSON 객체를 찾을 수 없습니다",
+            cleaned,
+            0,
+        )

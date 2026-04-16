@@ -24,6 +24,8 @@ from dotenv import load_dotenv
 
 # .env 파일에서 환경변수 로드
 load_dotenv()
+
+
 def _deep_merge(base: dict, update: dict) -> dict:
     """기본 설정(base)에 환경별 설정(update)을 깊은 복사로 덮어쓰는 함수"""
     for k, v in update.items():
@@ -32,6 +34,7 @@ def _deep_merge(base: dict, update: dict) -> dict:
         else:
             base[k] = v
     return base
+
 
 # 설정 파일 경로 (프로젝트 루트 기준)
 _CONFIG_DIR = Path(__file__).parent
@@ -97,6 +100,18 @@ class Settings:
         return cast(
             dict[str, Any],
             self._config["llm"].get("bedrock", {}),
+        )
+
+    @property
+    def prompt_caching_config(self) -> dict[str, Any]:
+        """프롬프트 캐싱 설정을 반환한다.
+
+        Returns:
+            {"enabled": bool, "min_tokens": int}
+        """
+        return cast(
+            dict[str, Any],
+            self._config.get("llm", {}).get("prompt_caching", {}),
         )
 
     def get_model_id(self, model_key: str) -> str:
@@ -207,16 +222,59 @@ class Settings:
         return int(self._config["pipeline"]["max_retries"])
 
     @property
+    def max_critical_retries(self) -> int:
+        """CRITICAL_FAIL 전용 재시도 상한."""
+        return int(self._config["pipeline"].get("max_critical_retries", 4))
+
+    @property
+    def tier0_timeout(self) -> int:
+        """TIER 0 타임아웃 (초)."""
+        return int(self._config.get("pipeline", {}).get("tier0_timeout_seconds", 10))
+
+    @property
     def tier1_timeout(self) -> int:
-        """TIER 1 병렬 작업 타임아웃 (초)."""
-        return int(self._config["pipeline"]["tier1_timeout_seconds"])
+        """TIER 1 타임아웃 (초)."""
+        return int(self._config.get("pipeline", {}).get("tier1_timeout_seconds", 30))
+
+    @property
+    def tier2_timeout(self) -> int:
+        """TIER 2 타임아웃 (초)."""
+        return int(self._config.get("pipeline", {}).get("tier2_timeout_seconds", 140))
+
+    @property
+    def tier3_timeout(self) -> int:
+        """TIER 3 타임아웃 (초)."""
+        return int(self._config.get("pipeline", {}).get("tier3_timeout_seconds", 50))
+
+    @property
+    def tier4_timeout(self) -> int:
+        """TIER 4 타임아웃 (초)."""
+        return int(self._config.get("pipeline", {}).get("tier4_timeout_seconds", 10))
+
+    @property
+    def async_timeout(self) -> int:
+        """비동기 작업 타임아웃 (초)."""
+        return int(self._config.get("pipeline", {}).get("async_timeout_seconds", 30))
+
+    @property
+    def stories_wait_timeout(self) -> int:
+        """Stories 데이터 수신 최대 대기 시간 (초). 기본 300초(5분)."""
+        return int(self._config.get("stories", {}).get("wait_timeout_seconds", 300))
 
     # --- API 설정 ---
 
     @property
     def api_base_url(self) -> str:
-        """백엔드 API 기본 URL. 환경변수 BACKEND_API_URL로 설정."""
-        return os.getenv("BACKEND_API_URL", "http://localhost:8080/api/v1")
+        """백엔드 내부 저장 API 기본 URL. 환경변수 BACKEND_API_URL로 설정.
+
+        내부 저장 엔드포인트(/greenroom/ingest/ai/*) 기준 URL이다.
+        사용자 프로필 조회 등 다른 경로는 BackendClient가 호스트만 파싱하여 사용한다.
+
+        GitHub Actions에서 미등록 Secret은 빈 문자열로 치환되므로
+        빈 문자열인 경우에도 기본값을 사용한다.
+        """
+        val = os.getenv("BACKEND_API_URL", "").strip()
+        return val if val else "http://localhost:8080/greenroom/ingest/ai"
 
     @property
     def api_timeout(self) -> int:
@@ -227,7 +285,7 @@ class Settings:
     def api_max_retries(self) -> int:
         """API 최대 재시도 횟수."""
         return int(self._config["api"]["max_retries"])
-        
+
     @property
     def allowed_origins(self) -> list[str]:
         """CORS 허용 오리진 목록. 환경변수로 전달받거나 기본값을 쓴다."""
@@ -334,9 +392,28 @@ class Settings:
     @property
     def s3_upload_prefix(self) -> str:
         """S3 업로드 prefix."""
-        return str(
-            self._config.get("storage", {}).get("s3", {}).get("upload_prefix", "vis")
+        return str(self._config.get("storage", {}).get("s3", {}).get("upload_prefix", "vis"))
+
+    @property
+    def circuit_breaker_config(self) -> dict[str, Any]:
+        """Circuit Breaker 설정을 반환한다."""
+        return cast(dict[str, Any], self._config.get("llm", {}).get("circuit_breaker", {}))
+
+    @property
+    def pii_sanitization_enabled(self) -> bool:
+        """PII 정제 활성화 여부를 반환한다."""
+        return bool(
+            self._config.get("security", {}).get("pii_sanitization", {}).get("enabled", True)
         )
+
+    @property
+    def graph_ema_alpha(self) -> float:
+        """누적 그래프 EMA 계수를 반환한다.
+
+        0.0~1.0 범위. 클수록 최신 에피소드의 반영 비율이 높아진다.
+        기본값 0.3 (settings.yaml graph.ema_alpha 미설정 시 폴백).
+        """
+        return float(self._config.get("graph", {}).get("ema_alpha", 0.3))
 
 
 # 싱글톤 인스턴스 (모듈 레벨에서 한 번만 로드)

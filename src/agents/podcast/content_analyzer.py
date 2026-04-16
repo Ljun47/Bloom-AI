@@ -2,7 +2,7 @@
 Content Analyzer — 팟캐스트 에피소드 콘텐츠 분석 에이전트.
 
 TIER 1에서 Safety, Emotion, Podcast Reasoning과 병렬 실행된다.
-대화모드의 Context Agent와 동일한 역할이며, 팟캐스트 에피소드에 맞게 특화되었다.
+팟캐스트 에피소드의 주제·테마·감정 흐름을 분석한다.
 
 담당: 개발자3
 출력 필드: content_analysis
@@ -18,9 +18,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from config.loader import get_settings
 from src.agents.shared.base_agent import BaseAgent
-from src.api.backend_resources import RESOURCE_CONTENT_ANALYSIS
+from src.agents.shared.context_utils import clamp
+from src.api.backend_resources import RESOURCE_CONTENT_ANALYSIS, TYPE_CONTENT_ANALYSIS
+from src.api.client import BackendClient
 from src.api.publisher import AgentDataPublisher
 from src.models.agent_state import AgentState
 
@@ -78,7 +79,23 @@ class ContentAnalyzerAgent(BaseAgent):
         출력:
             - content_analysis: 에피소드 주제, 테마, 구조 분석 결과
         """
-        user_input = state["user_input"]
+        user_input = state.get("user_input", "")
+        if not user_input:
+            self.logger.error("[ContentAnalyzer] user_input 없음")
+            return {
+                "content_analysis": {
+                    "main_theme": "",
+                    "sub_themes": [],
+                    "emotional_journey": {
+                        "opening": "",
+                        "development": "",
+                        "climax": "",
+                        "closing": "",
+                    },
+                    "depth_level": "light",
+                    "error": "user_input_missing",
+                }
+            }
         intent = state.get("intent", {})
 
         # STEP 1: 입력 전처리 — 특수문자 정규화 + 길이 검증
@@ -90,24 +107,53 @@ class ContentAnalyzerAgent(BaseAgent):
         context_info = self._build_context_info(intent, complexity_score, depth_level)
 
         # STEP 2: LLM 호출로 콘텐츠 분석 수행
-        analysis = await self.call_llm_json(
-            system_prompt=self.get_prompt("system_prompt"),
-            user_message=(
-                f"사용자 입력: {normalized_input}{context_info}\n\n" f"[분석 깊이: {depth_level}]"
-            ),
-        )
+        try:
+            analysis = await self.call_llm_json(
+                system_prompt=self.get_prompt("system_prompt"),
+                user_message=(
+                    f"사용자 입력: {normalized_input}{context_info}\n\n"
+                    f"[분석 깊이: {depth_level}]"
+                ),
+            )
+        except Exception as e:
+            # LLM이 빈 응답 또는 비JSON 응답을 반환할 때 발생.
+            # CRISIS 여부와 무관하게 최소 폴백으로 진행하여 TIER 1 붕괴를 방지한다.
+            # 이후 백엔드 전송은 _validate_and_correct({}) 결과로 정상 실행된다.
+            self.logger.warning(
+                "[ContentAnalyzer] LLM 응답 파싱 실패 — 최소 폴백으로 계속 (백엔드 전송 유지): %s",
+                type(e).__name__,
+            )
+            analysis = {}
 
         # STEP 3: 결과 검증 및 보정 — 스펙 기준에 맞게 후처리
         validated_analysis = self._validate_and_correct(analysis, depth_level)
 
         # 백엔드에 분석 결과 직접 전달 (실패 시 예외 미전파)
+        session_id = state.get("session_id") or ""
+        trace_id = str(state.get("trace_id", ""))
+        db_payload = self._build_db_payload(validated_analysis, trace_id=trace_id)
         publisher = AgentDataPublisher()
         await publisher.publish(
             resource=RESOURCE_CONTENT_ANALYSIS,
-            data=validated_analysis,
+            data=db_payload,
             user_id=state.get("user_id", ""),
-            session_id=state.get("session_id", ""),
+            session_id=session_id,
+            data_type=TYPE_CONTENT_ANALYSIS,
         )
+
+        # mind-frequencies 수집 호출 (fire-and-forget, 콘텐츠 분석 직후)
+        backend_client = BackendClient()
+        try:
+            user_summary: dict = validated_analysis.get("user_summary", {})
+            keywords: list[str] = user_summary.get("keywords", [])
+            description: str = user_summary.get("summary", "")
+            await backend_client.ingest_mind_frequencies(
+                session_id=session_id,
+                keywords=keywords,
+                description=description,
+            )
+        finally:
+            await backend_client.close()
 
         return {
             "content_analysis": validated_analysis,
@@ -117,20 +163,15 @@ class ContentAnalyzerAgent(BaseAgent):
 
     def _load_config(self) -> None:
         """settings.yaml에서 에이전트 설정을 로드한다. 실패 시 기본값 사용."""
-        try:
-            cfg = get_settings().get_agent_config("content_analyzer")
-        except Exception:
-            cfg = {}
-        self.min_duration: int = cfg.get("min_duration", _DEFAULTS["min_duration"])
-        self.max_duration: int = cfg.get("max_duration", _DEFAULTS["max_duration"])
-        self.min_sub_themes: int = cfg.get("min_sub_themes", _DEFAULTS["min_sub_themes"])
-        self.max_sub_themes: int = cfg.get("max_sub_themes", _DEFAULTS["max_sub_themes"])
-        self.min_input_length: int = cfg.get("min_input_length", _DEFAULTS["min_input_length"])
-        self.max_theme_length: int = cfg.get("max_theme_length", _DEFAULTS["max_theme_length"])
-        self.deep_threshold: float = cfg.get("deep_threshold", _DEFAULTS["deep_threshold"])
-        self.moderate_threshold: float = cfg.get(
-            "moderate_threshold", _DEFAULTS["moderate_threshold"]
-        )
+        cfg = self._load_agent_config(_DEFAULTS)
+        self.min_duration: int = cfg["min_duration"]
+        self.max_duration: int = cfg["max_duration"]
+        self.min_sub_themes: int = cfg["min_sub_themes"]
+        self.max_sub_themes: int = cfg["max_sub_themes"]
+        self.min_input_length: int = cfg["min_input_length"]
+        self.max_theme_length: int = cfg["max_theme_length"]
+        self.deep_threshold: float = cfg["deep_threshold"]
+        self.moderate_threshold: float = cfg["moderate_threshold"]
 
     # === 전처리 메서드 ===
 
@@ -187,60 +228,106 @@ class ContentAnalyzerAgent(BaseAgent):
     # === 후처리 메서드 ===
 
     def _validate_and_correct(self, analysis: dict[str, Any], depth_level: str) -> dict[str, Any]:
-        """
-        LLM 분석 결과를 검증하고 스펙 기준에 맞게 보정한다.
+        """LLM 분석 결과를 v2.2.0 화이트리스트 기준으로 검증·추출한다.
 
-        보정 항목:
-            1. main_theme 길이 제한 (100자)
-            2. sub_themes 개수 제한 (3~5개)
-            3. target_duration 범위 제한 (3~5분)
-            4. narrative_structure 유효값 검증
-            5. depth_level 필드 보장
+        반환값은 AgentState용 9개 필드 (v2.2.0 = 백엔드 API 계약 일치).
+        DB 저장 시에는 _build_db_payload()로 trace_id를 추가한다.
         """
-        corrected = dict(analysis)
-
-        # 1. 주제 길이 검증 — 100자 초과 시 잘라냄
-        main_theme = corrected.get("main_theme", corrected.get("topic", ""))
+        # 1. main_theme — 100자 초과 시 잘라냄
+        main_theme = str(analysis.get("main_theme", analysis.get("topic", "")))
         if len(main_theme) > self.max_theme_length:
-            main_theme = main_theme[:self.max_theme_length] + "..."
-        corrected["main_theme"] = main_theme
+            main_theme = main_theme[: self.max_theme_length] + "..."
 
-        # 2. 하위 주제 개수 보정 — 3~5개 범위
-        sub_themes = corrected.get("sub_themes", corrected.get("themes", []))
-        if not isinstance(sub_themes, list):
-            sub_themes = []
-        if len(sub_themes) > self.max_sub_themes:
-            sub_themes = sub_themes[:self.max_sub_themes]
-        corrected["sub_themes"] = sub_themes
+        # 2. user_summary — {keywords: list[:5], summary: str} 구조 강제
+        raw_summary = analysis.get("user_summary", {})
+        if not isinstance(raw_summary, dict):
+            raw_summary = {}
+        user_summary = {
+            "keywords": (
+                raw_summary.get("keywords", [])[:5]
+                if isinstance(raw_summary.get("keywords"), list)
+                else []
+            ),
+            "summary": str(raw_summary.get("summary", "")),
+        }
 
-        # 3. 에피소드 길이 보정 — 3~5분 범위 고정
-        target_duration = corrected.get("target_duration")
+        # 3. emotional_journey — 4-키 구조 강제 (opening/development/climax/closing)
+        raw_journey = analysis.get("emotional_journey", {})
+        if not isinstance(raw_journey, dict):
+            raw_journey = {}
+        emotional_journey = {
+            "opening": str(raw_journey.get("opening", "")),
+            "development": str(raw_journey.get("development", "")),
+            "climax": str(raw_journey.get("climax", "")),
+            "closing": str(raw_journey.get("closing", "")),
+        }
+
+        # 4. key_messages — list[:5] 제한, 비-list 시 빈 리스트
+        raw_messages = analysis.get("key_messages", [])
+        key_messages = raw_messages[:5] if isinstance(raw_messages, list) else []
+
+        # 5. sub_themes — list[3-5] 강제. min 미달 시 main_theme 기반 fallback
+        raw_themes = analysis.get("sub_themes", analysis.get("themes", []))
+        if not isinstance(raw_themes, list):
+            raw_themes = []
+        raw_themes = raw_themes[: self.max_sub_themes]
+        if len(raw_themes) < self.min_sub_themes:
+            self.logger.warning(
+                "[ContentAnalyzer] sub_themes 개수 미달 (%d < %d) — 기본값으로 보정",
+                len(raw_themes),
+                self.min_sub_themes,
+            )
+            while len(raw_themes) < self.min_sub_themes:
+                raw_themes.append(main_theme)
+
+        # 6. target_duration — clamp(3-5)
+        target_duration = analysis.get("target_duration")
         if target_duration is not None:
             try:
                 target_duration = int(target_duration)
             except (ValueError, TypeError):
-                target_duration = 4  # 기본값
-            target_duration = max(self.min_duration, min(self.max_duration, target_duration))
+                target_duration = 4
+            target_duration = clamp(target_duration, self.min_duration, self.max_duration)
         else:
-            target_duration = 4  # 기본값
-        corrected["target_duration"] = target_duration
+            target_duration = 4
 
-        # 4. 서사 구조 유효성 검증 — 유효하지 않으면 reflection 기본값
-        narrative = corrected.get("narrative_structure", corrected.get("suggested_structure", ""))
+        # 7. narrative_structure — 유효값 검증 + fallback
+        narrative = analysis.get("narrative_structure", analysis.get("suggested_structure", ""))
         if narrative not in VALID_NARRATIVE_STRUCTURES:
             narrative = "reflection"
-        corrected["narrative_structure"] = narrative
 
-        # 5. depth_level 필드 보장
-        corrected["depth_level"] = depth_level
+        # 8. confidence — 0.0~1.0 범위 강제
+        raw_confidence = analysis.get("confidence")
+        try:
+            confidence = float(raw_confidence) if raw_confidence is not None else 0.5
+        except (ValueError, TypeError):
+            confidence = 0.5
+        confidence = max(0.0, min(1.0, confidence))
 
-        return corrected
+        # 9. depth_level — 코드가 직접 결정
+        return {
+            "user_summary": user_summary,
+            "main_theme": main_theme,
+            "emotional_journey": emotional_journey,
+            "key_messages": key_messages,
+            "depth_level": depth_level,
+            "sub_themes": raw_themes,
+            "target_duration": target_duration,
+            "narrative_structure": narrative,
+            "confidence": confidence,
+        }
 
-
-# LangGraph 노드 함수로 사용할 에이전트 인스턴스
-content_analyzer_agent = ContentAnalyzerAgent()
+    def _build_db_payload(self, validated: dict[str, Any], trace_id: str = "") -> dict[str, Any]:
+        """content_analyses DB 저장용 페이로드. 9개 필드 + trace_id."""
+        return {
+            **validated,
+            "trace_id": trace_id,
+        }
 
 
 async def content_analyzer_node(state: AgentState) -> dict[str, Any]:
-    """LangGraph 노드 — Content Analyzer."""
-    return await content_analyzer_agent(state)
+    """LangGraph 노드 — Content Analyzer.
+    요청마다 새 인스턴스를 생성하여 동시 요청 간 상태를 격리한다.
+    """
+    agent = ContentAnalyzerAgent()
+    return await agent(state)

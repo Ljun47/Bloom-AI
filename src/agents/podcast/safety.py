@@ -1,44 +1,89 @@
 """
 Safety Agent — 사용자 입력의 안전성 판정 및 위기 선점.
 
-TIER 1 (병렬) | 모델: Sonnet 4
+TIER 1 (병렬) | 모델: settings.yaml 설정을 따름 (기본 Sonnet)
 """
+
 from __future__ import annotations
 
 from typing import Any
+
 from src.agents.shared.base_agent import BaseAgent
 from src.agents.shared.safety_constants import SAFETY_MESSAGES
 from src.models.agent_state import AgentState
+
 
 class SafetyAgent(BaseAgent):
     """사용자 입력의 위험도를 평가하고, CRISIS 시 즉시 대응 로직을 트리거한다."""
 
     def __init__(self) -> None:
-        # AGENT_ROLES.md에 정의된 TIER 1 병렬 노드 설정
+        # [정석 복구] 하드코딩을 제거하고 BaseAgent의 자동 설정 로드 방식을 따릅니다.
+        # super().__init__ 호출 시 name="safety"를 통해 settings.yaml의 설정을 읽어옵니다.
         super().__init__(name="safety", tier=1)
 
     async def process(self, state: AgentState) -> dict[str, Any]:
-        """안전성 판정 및 시스템 상수 결합 로직을 수행한다."""
+        """안전성 판정 및 시스템 상수 결합 로직을 수행한다.
+
+        user_input과 intent의 risk_flag를 기반으로 LLM에 위험도 평가를 요청한다.
+        CRISIS/warning 판정 시 SAFETY_MESSAGES 상수를 required_in_script 최상단에 결합한다
+        (법적/임상 안내 문구 우선 배치).
+
+        Args:
+            state: 현재 AgentState. 참조 필드:
+                - user_input (str): 사용자 입력 텍스트.
+                - intent (dict): Intent Classifier 결과.
+                  flags.risk_flag만 추출 (1차 위기 감지 여부).
+
+        Returns:
+            변경된 필드만 포함한 dict:
+                - safety_flags (dict): LLM 평가 전체 결과
+                  (status, risk_level, risk_score, reasons, required_in_script 포함).
+                  CRISIS/warning 시 required_in_script[0]은 SAFETY_MESSAGES 고정 문구.
+                - risk_level (int): 위험 레벨 (0–4).
+                - risk_score (float): 위험 점수 (0.0–1.0).
+                - next_step (str): crisis 판정 시에만 포함. 값: "crisis_response".
+
+        Raises:
+            없음. LLM 호출 실패 시 status="safe" fallback 결과를 반환한다
+            (safety_flags.error="llm_call_failed" 포함, required_in_script 미설정).
+        """
         user_input = state.get("user_input", "")
-        
+
         # [최적화] AGENT_IO_ANALYSIS.md 권고에 따라 intent 전체가 아닌 risk_flag만 추출
         intent = state.get("intent", {})
         risk_flag = intent.get("flags", {}).get("risk_flag", False)
-        
+
         # LLM 컨텍스트 구성 (토큰 절약형)
         intent_ref = f"[Intent 위기감지 참고] risk_flag: {risk_flag}\n\n" if risk_flag else ""
-        user_message = f"{intent_ref}사용자 입력 분석 요청:\n{user_input}"
-        
-        # 1. LLM 호출 (시스템 프롬프트는 YAML에서 자동 로드)
-        result = await self.call_llm_json(
-            system_prompt=self.get_prompt("system_prompt"),
-            user_message=user_message
+
+        # [품질 강화] 모델이 답변 뒤에 사족을 붙여
+        # JSON 파싱 에러(Extra data)가 나는 것을 방지하기 위해
+        # 지시문 추가
+        user_message = (
+            f"{intent_ref}사용자 입력 분석 요청:\n{user_input}\n\n"
+            "IMPORTANT: Respond ONLY with a valid JSON object. "
+            "No preamble, no explanation, no markdown backticks."
         )
-        
+
+        # 1. LLM 호출 (시스템 프롬프트는 YAML에서 정의된 경로를 통해 자동 로드됨)
+        try:
+            result = await self.call_llm_json(
+                system_prompt=self.get_prompt("system_prompt"), user_message=user_message
+            )
+        except Exception as e:
+            self.logger.error("[SafetyAgent] LLM 호출 실패 — safe fallback: %s", e)
+            result = {
+                "risk_level": 0,
+                "risk_score": 0.0,
+                "status": "safe",
+                "required_in_script": [],
+                "error": "llm_call_failed",
+            }
+
         # 2. 판정 결과 및 상태 추출
-        status = result.get("status", "safe") # safe, warning, crisis
+        status = result.get("status", "safe")  # safe, warning, crisis
         risk_level = result.get("risk_level", 0)
-        
+
         # 3. [상수 결합] status가 crisis 또는 warning일 때 고정 문구 주입
         # 법적/임상적 안전 안내 문구를 LLM 생성값보다 우선하여 배치한다.
         if status in SAFETY_MESSAGES:
@@ -46,24 +91,34 @@ class SafetyAgent(BaseAgent):
             llm_reasons = result.get("reasons", [])
             # 시스템 상수 문구를 리스트의 최상단에 배치
             result["required_in_script"] = [system_msg] + llm_reasons
-        
+
         # 4. [제어 로직] CLAUDE.md의 CRISIS 선점 메커니즘 지원
-        # status가 crisis인 경우 워크플로우를 즉시 중단시키기 위한 플래그 설정
+        # SA-1: LLM 응답에서 허용 4개 키만 명시 추출 (스펙 외 필드 유입 방지)
+        required = result.get("required_in_script", [])
+        if not isinstance(required, list):
+            required = []
+
         update_data = {
-            "safety_flags": result,
+            "safety_flags": {
+                "status": status,
+                "risk_level": risk_level,
+                "risk_score": float(result.get("risk_score", 0.0)),
+                "required_in_script": required,
+            },
             "risk_level": risk_level,
-            "risk_score": result.get("risk_score", 0.0)
+            "risk_score": float(result.get("risk_score", 0.0)),
         }
-        
+
         if status == "crisis":
             # TIER 1 병렬 작업을 중단시키는 CANCEL SIGNAL 역할의 next_step 설정
             update_data["next_step"] = "crisis_response"
-            
+
         return update_data
 
-# --- 싱글톤 + 노드 래퍼 ---
-safety_agent = SafetyAgent()
 
 async def safety_node(state: AgentState) -> dict[str, Any]:
-    """LangGraph 노드 — Safety Agent. 3인 합의된 workflow.py에서 호출됨."""
-    return await safety_agent(state)
+    """LangGraph 노드 — Safety Agent.
+    요청마다 새 인스턴스를 생성하여 동시 요청 간 상태를 격리한다.
+    """
+    agent = SafetyAgent()
+    return await agent(state)

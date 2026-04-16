@@ -3,10 +3,9 @@
 
 Reasoning 계열 에이전트가 조건부로 호출하는 독립 에이전트의 stub 구현.
 - Episode Memory (개발자2) — 팟캐스트모드
-- Knowledge Agent (개발자1) — 대화모드 + 팟캐스트모드
-- Memory Agent (개발자2) — 대화모드
 
-git main 통합 시 실제 에이전트로 교체한다.
+KnowledgeAgentStub은 2026-04-15 실제 KnowledgeAgent 정식 활성화와 함께 제거됨.
+(PR #145/#146 완료 → feature/validation-knowledge-activation)
 
 인터페이스 계약:
     - search(query, ...) -> dict
@@ -40,74 +39,5 @@ class EpisodeMemoryStub:
         """
         return {
             "episodes": [],
-            "relevance_scores": [],
-        }
-
-
-class KnowledgeAgentStub:
-    """
-    Knowledge Agent의 stub 구현.
-
-    실제 에이전트는 전문 지식 벡터 DB를 검색하지만,
-    stub은 빈 결과를 반환한다.
-
-    인터페이스 계약:
-        async def search(query: str, domain: str) -> dict
-    """
-
-    async def search(
-        self,
-        query: str,
-        domain: str = "mental_health",
-    ) -> dict:
-        """
-        전문 지식 검색 (stub — 빈 결과 반환).
-
-        Args:
-            query: 검색 쿼리
-            domain: 지식 도메인 (기본: mental_health)
-
-        Returns:
-            빈 검색 결과 dict
-        """
-        return {
-            "articles": [],
-            "guidelines": [],
-        }
-
-
-class MemoryAgentStub:
-    """
-    Memory Agent의 stub 구현 (대화모드).
-
-    실제 에이전트는 Pinecone 벡터 검색 + MySQL 메타데이터를 사용하지만,
-    stub은 빈 결과를 반환한다.
-
-    Reasoning Agent가 조건부로 호출한다.
-    (graph.needs_personal_context가 True일 때만)
-
-    인터페이스 계약:
-        async def search(query: str, user_id: str, filters: dict | None = None) -> dict
-    """
-
-    async def search(
-        self,
-        query: str,
-        user_id: str,
-        filters: dict | None = None,
-    ) -> dict:
-        """
-        개인 기억 검색 (stub — 빈 결과 반환).
-
-        Args:
-            query: 검색 쿼리
-            user_id: 사용자 ID
-            filters: 검색 필터 (선택)
-
-        Returns:
-            빈 검색 결과 dict
-        """
-        return {
-            "memories": [],
             "relevance_scores": [],
         }

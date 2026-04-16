@@ -16,27 +16,19 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tests.shared_fixtures.mock_data import (
-    DEVELOPER_FIELDS_CONVERSATION,
     DEVELOPER_FIELDS_PODCAST,
-    EXPECTED_CONVERSATION_FIELDS,
     EXPECTED_PODCAST_FIELDS,
     MOCK_BV_FAIL,
     MOCK_BV_PASS,
     MOCK_CONTENT_ANALYSIS,
-    MOCK_CONTEXT,
     MOCK_EMOTION,
-    MOCK_FINAL_OUTPUT_CONVERSATION,
     MOCK_FINAL_OUTPUT_PODCAST,
-    MOCK_INTENT_CONVERSATION,
     MOCK_INTENT_CRISIS,
     MOCK_INTENT_PODCAST,
-    MOCK_REASONING_CONVERSATION,
     MOCK_REASONING_PODCAST,
     MOCK_SAFETY_CRISIS,
     MOCK_SAFETY_SAFE,
     MOCK_SCRIPT_DRAFT,
-    MOCK_SYNTHESIS,
-    MOCK_VALIDATOR_PASS,
     MOCK_VISUALIZATION,
 )
 
@@ -111,17 +103,6 @@ def podcast_initial_state() -> dict[str, Any]:
 
 
 @pytest.fixture
-def conversation_initial_state() -> dict[str, Any]:
-    """대화모드 초기 상태."""
-    return {
-        "user_input": "요즘 직장에서 스트레스를 많이 받아요. 어떻게 해야 할까요?",
-        "user_id": "user_mock_e2e_002",
-        "session_id": "sess_mock_e2e_002",
-        "mode": "conversation",
-    }
-
-
-@pytest.fixture
 def crisis_initial_state() -> dict[str, Any]:
     """위기 상황 초기 상태."""
     return {
@@ -143,91 +124,117 @@ def mock_podcast_nodes(monkeypatch):
     import src.graph.workflow as wf
 
     monkeypatch.setattr(
-        wf._intent_classifier, "process",
+        wf,
+        "intent_classifier_node",
         AsyncMock(return_value=MOCK_INTENT_PODCAST),
     )
     monkeypatch.setattr(wf, "safety_node", AsyncMock(return_value=MOCK_SAFETY_SAFE))
     monkeypatch.setattr(wf, "emotion_node", AsyncMock(return_value=MOCK_EMOTION))
     monkeypatch.setattr(
-        wf, "content_analyzer_node",
+        wf,
+        "content_analyzer_node",
         AsyncMock(return_value=MOCK_CONTENT_ANALYSIS),
     )
     monkeypatch.setattr(
-        wf, "podcast_reasoning_node",
+        wf,
+        "podcast_reasoning_node",
         AsyncMock(return_value=MOCK_REASONING_PODCAST),
     )
     monkeypatch.setattr(
-        wf._script_generator, "process",
+        wf,
+        "script_generator_node",
         AsyncMock(return_value=MOCK_SCRIPT_DRAFT),
     )
     monkeypatch.setattr(wf, "batch_validator_node", AsyncMock(return_value=MOCK_BV_PASS))
     monkeypatch.setattr(
-        wf._script_personalizer, "process",
+        wf,
+        "script_personalizer_node",
         AsyncMock(return_value=MOCK_FINAL_OUTPUT_PODCAST),
     )
     monkeypatch.setattr(wf, "visualization_node", AsyncMock(return_value=MOCK_VISUALIZATION))
     monkeypatch.setattr(wf, "learning_node", AsyncMock(return_value={}))
-
-
-@pytest.fixture
-def mock_conversation_nodes(monkeypatch):
-    """대화 모드 전체 파이프라인 노드를 mock 데이터로 패치."""
-    import src.graph.workflow as wf
-
     monkeypatch.setattr(
-        wf._intent_classifier, "process",
-        AsyncMock(return_value=MOCK_INTENT_CONVERSATION),
+        wf.stories_store,
+        "wait_for_stories",
+        AsyncMock(return_value={"keywords": [], "title": "mock", "description": "mock"}),
     )
-    monkeypatch.setattr(wf, "safety_node", AsyncMock(return_value=MOCK_SAFETY_SAFE))
-    monkeypatch.setattr(wf, "emotion_node", AsyncMock(return_value=MOCK_EMOTION))
-    monkeypatch.setattr(wf, "context_node", AsyncMock(return_value=MOCK_CONTEXT))
-    monkeypatch.setattr(
-        wf, "reasoning_node",
-        AsyncMock(return_value=MOCK_REASONING_CONVERSATION),
-    )
-    monkeypatch.setattr(wf, "synthesis_node", AsyncMock(return_value=MOCK_SYNTHESIS))
-    monkeypatch.setattr(wf, "validator_node", AsyncMock(return_value=MOCK_VALIDATOR_PASS))
-    monkeypatch.setattr(
-        wf, "personalization_node",
-        AsyncMock(return_value=MOCK_FINAL_OUTPUT_CONVERSATION),
-    )
-    monkeypatch.setattr(wf, "visualization_node", AsyncMock(return_value=MOCK_VISUALIZATION))
-    monkeypatch.setattr(wf, "learning_node", AsyncMock(return_value={}))
 
 
 @pytest.fixture
 def mock_crisis_nodes(monkeypatch):
-    """CRISIS 시나리오 노드 mock."""
+    """CRISIS 시나리오 노드 mock (신규 아키텍처 — TIER 2~4 CRISIS 폴백 반환).
+
+    기존 아키텍처에서는 CRISIS 시 TIER 2~4를 스킵했으나, 신규 아키텍처에서는
+    TIER 2~4가 전부 실행되고 내부에서 LLM 미호출 + CRISIS 하드코딩 값을 반환한다.
+    """
+    import json as _json
+    import uuid as _uuid
+
     import src.graph.workflow as wf
+    from src.agents.shared.safety_constants import CRISIS_FALLBACK_VALUES, SAFETY_MESSAGES
 
     monkeypatch.setattr(
-        wf._intent_classifier, "process",
+        wf,
+        "intent_classifier_node",
         AsyncMock(return_value=MOCK_INTENT_CRISIS),
     )
     monkeypatch.setattr(wf, "safety_node", AsyncMock(return_value=MOCK_SAFETY_CRISIS))
     monkeypatch.setattr(wf, "emotion_node", AsyncMock(return_value=MOCK_EMOTION))
     monkeypatch.setattr(
-        wf, "content_analyzer_node",
+        wf,
+        "content_analyzer_node",
         AsyncMock(return_value=MOCK_CONTENT_ANALYSIS),
     )
     monkeypatch.setattr(
-        wf, "podcast_reasoning_node",
+        wf,
+        "podcast_reasoning_node",
         AsyncMock(return_value=MOCK_REASONING_PODCAST),
     )
+    # TIER 2~4: 신규 아키텍처 — CRISIS 폴백 반환
     monkeypatch.setattr(
-        wf._script_generator, "process",
-        AsyncMock(side_effect=AssertionError("CRISIS 시 TIER 2는 실행되면 안 됨")),
+        wf,
+        "script_generator_node",
+        AsyncMock(return_value={"script_draft": CRISIS_FALLBACK_VALUES["script_draft"]}),
     )
     monkeypatch.setattr(
-        wf, "batch_validator_node",
-        AsyncMock(side_effect=AssertionError("CRISIS 시 TIER 3는 실행되면 안 됨")),
+        wf,
+        "visualization_node",
+        AsyncMock(return_value={"visual_data": CRISIS_FALLBACK_VALUES["visual_data"]}),
     )
     monkeypatch.setattr(
-        wf._script_personalizer, "process",
-        AsyncMock(side_effect=AssertionError("CRISIS 시 TIER 4는 실행되면 안 됨")),
+        wf,
+        "batch_validator_node",
+        AsyncMock(return_value={"validation_result": CRISIS_FALLBACK_VALUES["validation_result"]}),
     )
-    monkeypatch.setattr(wf, "visualization_node", AsyncMock(return_value=MOCK_VISUALIZATION))
+    # script_personalizer_node: CRISIS PersonalizedScript JSON 반환
+    crisis_final_output = _json.dumps(
+        {
+            "episode_id": f"ep_crisis_{_uuid.uuid4().hex[:12]}",
+            "episode_title": "마음 돌봄 안내",
+            "total_duration": 0,
+            "script_text": SAFETY_MESSAGES["crisis"],
+            "tts_markers": [],
+            "key_insights": [],
+            "themes": [],
+            "personalization_meta": {
+                "applied_style": {},
+                "adjusted_segments": [],
+                "attitude_applied": "crisis",
+            },
+        },
+        ensure_ascii=False,
+    )
+    monkeypatch.setattr(
+        wf,
+        "script_personalizer_node",
+        AsyncMock(return_value={"final_output": crisis_final_output}),
+    )
     monkeypatch.setattr(wf, "learning_node", AsyncMock(return_value={}))
+    monkeypatch.setattr(
+        wf.stories_store,
+        "wait_for_stories",
+        AsyncMock(return_value={"keywords": [], "title": "mock", "description": "mock"}),
+    )
 
 
 # ====================================================================
@@ -245,9 +252,9 @@ async def test_podcast_e2e_full(mock_podcast_nodes, podcast_initial_state):
 
     # 모든 expected 필드 존재
     validation = _validate_result(final_state, EXPECTED_PODCAST_FIELDS)
-    assert validation["fields_present"] == validation["fields_total"], (
-        f"Missing: {[k for k, v in validation['field_details'].items() if v == 'MISSING']}"
-    )
+    assert (
+        validation["fields_present"] == validation["fields_total"]
+    ), f"Missing: {[k for k, v in validation['field_details'].items() if v == 'MISSING']}"
 
     # 3명의 개발자 모두 기여
     for developer, fields in DEVELOPER_FIELDS_PODCAST.items():
@@ -292,39 +299,6 @@ async def test_podcast_e2e_full(mock_podcast_nodes, podcast_initial_state):
 # ====================================================================
 
 
-@pytest.mark.asyncio
-async def test_conversation_full_pipeline(mock_conversation_nodes, conversation_initial_state):
-    """대화모드 전체 파이프라인이 정상 실행되고 3명 개발자 모두 기여한다."""
-    from src.graph.workflow import build_unified_graph
-
-    final_state = await build_unified_graph().compile().ainvoke(conversation_initial_state)
-
-    validation = _validate_result(final_state, EXPECTED_CONVERSATION_FIELDS)
-    assert validation["fields_present"] == validation["fields_total"], (
-        f"Missing: {[k for k, v in validation['field_details'].items() if v == 'MISSING']}"
-    )
-
-    for developer, fields in DEVELOPER_FIELDS_CONVERSATION.items():
-        for field in fields:
-            assert final_state.get(field), f"{developer}의 {field} 필드 없음"
-
-
-@pytest.mark.asyncio
-async def test_conversation_mode_routing(mock_conversation_nodes, conversation_initial_state):
-    """TIER 0에서 mode=conversation으로 라우팅되어 대화모드 전용 필드만 존재한다."""
-    from src.graph.workflow import build_unified_graph
-
-    final_state = await build_unified_graph().compile().ainvoke(conversation_initial_state)
-
-    assert final_state.get("context"), "대화모드 context 필드 없음"
-    assert final_state.get("response_draft"), "대화모드 response_draft 필드 없음"
-    assert not final_state.get("content_analysis"), "대화모드인데 content_analysis 존재"
-    assert not final_state.get("script_draft"), "대화모드인데 script_draft 존재"
-
-    final_output = final_state.get("final_output", "")
-    assert isinstance(final_output, str) and len(final_output) > 30
-
-
 # ====================================================================
 # CRISIS 선점 메커니즘 테스트
 # ====================================================================
@@ -332,16 +306,28 @@ async def test_conversation_mode_routing(mock_conversation_nodes, conversation_i
 
 @pytest.mark.asyncio
 async def test_crisis_e2e_full(mock_crisis_nodes, crisis_initial_state):
-    """CRISIS E2E: final_output 즉시 생성 + TIER 2~4 스킵 + safety_flags 통합 검증."""
+    """CRISIS E2E (신규 아키텍처): 전 파이프라인 실행 + TIER 2~4 CRISIS 폴백 + safety_flags 검증."""
+    import json as _json
+
     from src.graph.workflow import build_unified_graph
 
     final_state = await build_unified_graph().compile().ainvoke(crisis_initial_state)
 
-    # final_output 즉시 생성
-    assert final_state.get("final_output"), "CRISIS인데 final_output 없음"
+    # final_output은 유효한 PersonalizedScript JSON이며 ep_crisis_ 접두사 episode_id를 가진다
+    final_output = final_state.get("final_output", "")
+    assert final_output, "CRISIS인데 final_output 없음"
+    parsed = _json.loads(final_output)
+    assert parsed["episode_id"].startswith("ep_crisis_")
 
-    # TIER 2~4 스킵 (mock에 AssertionError 설정됨)
-    assert not final_state.get("script_draft"), "CRISIS인데 script_draft 존재"
+    # TIER 2~4 CRISIS 폴백 결과 보존
+    sd = final_state.get("script_draft", {})
+    assert sd.get("episode_title") == "마음 돌봄 안내"
+    vd = final_state.get("visual_data", {})
+    assert vd.get("status") == "crisis_fallback"
+    assert vd.get("image_url"), "CRISIS 폴백인데 image_url 빈 값"
+    vr = final_state.get("validation_result", {})
+    assert vr.get("verdict") == "PASS"
+    assert vr.get("forced_pass") is True
 
     # safety_flags에 crisis 상태 기록
     sf = final_state.get("safety_flags", {})
@@ -360,32 +346,42 @@ async def test_retry_then_pass(monkeypatch, podcast_initial_state):
     import src.graph.workflow as wf
 
     monkeypatch.setattr(
-        wf._intent_classifier, "process",
+        wf,
+        "intent_classifier_node",
         AsyncMock(return_value=MOCK_INTENT_PODCAST),
     )
     monkeypatch.setattr(wf, "safety_node", AsyncMock(return_value=MOCK_SAFETY_SAFE))
     monkeypatch.setattr(wf, "emotion_node", AsyncMock(return_value=MOCK_EMOTION))
     monkeypatch.setattr(
-        wf, "content_analyzer_node",
+        wf,
+        "content_analyzer_node",
         AsyncMock(return_value=MOCK_CONTENT_ANALYSIS),
     )
     monkeypatch.setattr(
-        wf, "podcast_reasoning_node",
+        wf,
+        "podcast_reasoning_node",
         AsyncMock(return_value=MOCK_REASONING_PODCAST),
     )
     monkeypatch.setattr(
-        wf._script_generator, "process",
+        wf,
+        "script_generator_node",
         AsyncMock(return_value=MOCK_SCRIPT_DRAFT),
     )
 
     bv_mock = AsyncMock(side_effect=[MOCK_BV_FAIL, MOCK_BV_PASS])
     monkeypatch.setattr(wf, "batch_validator_node", bv_mock)
     monkeypatch.setattr(
-        wf._script_personalizer, "process",
+        wf,
+        "script_personalizer_node",
         AsyncMock(return_value=MOCK_FINAL_OUTPUT_PODCAST),
     )
     monkeypatch.setattr(wf, "visualization_node", AsyncMock(return_value=MOCK_VISUALIZATION))
     monkeypatch.setattr(wf, "learning_node", AsyncMock(return_value={}))
+    monkeypatch.setattr(
+        wf.stories_store,
+        "wait_for_stories",
+        AsyncMock(return_value={"keywords": [], "title": "mock", "description": "mock"}),
+    )
 
     from src.graph.workflow import build_unified_graph
 
@@ -402,38 +398,23 @@ async def test_retry_then_pass(monkeypatch, podcast_initial_state):
 # ====================================================================
 
 
-def test_unified_graph_node_count():
-    """통합 그래프에 최소 13개 노드가 등록되어 있다."""
-    from src.graph.workflow import build_unified_graph
+def test_podcast_graph_required_nodes():
+    """팟캐스트 그래프에 필수 노드가 모두 등록되어 있다."""
+    from src.graph.workflow import build_podcast_graph
 
-    compiled = build_unified_graph().compile()
-    node_names = [n for n in compiled.nodes.keys() if not n.startswith("__")]
-    assert len(node_names) >= 13, f"노드 수 부족: {len(node_names)}개"
-
-
-@pytest.mark.parametrize(
-    "builder_name, expected_nodes",
-    [
-        (
-            "podcast",
-            {"tier1_podcast", "script_generator", "batch_validator",
-             "script_personalizer", "crisis_response", "async_post", "increment_iteration"},
-        ),
-        (
-            "conversation",
-            {"tier1_conversation", "synthesis", "validator",
-             "personalization", "crisis_response", "async_post", "increment_iteration"},
-        ),
-    ],
-    ids=["podcast", "conversation"],
-)
-def test_mode_graph_required_nodes(builder_name: str, expected_nodes: set[str]):
-    """모드별 그래프에 필수 노드가 모두 등록되어 있다."""
-    from src.graph.workflow import build_conversation_graph, build_podcast_graph
-
-    builder = build_podcast_graph if builder_name == "podcast" else build_conversation_graph
-    compiled = builder().compile()
+    expected_nodes = {
+        "tier1_podcast",
+        "tier2_podcast",
+        "batch_validator",
+        "script_personalizer",
+        "wait_for_stories",
+        "stories_error",
+        "crisis_response",
+        "async_post",
+        "increment_iteration",
+    }
+    compiled = build_podcast_graph().compile()
     node_names = [n for n in compiled.nodes.keys() if not n.startswith("__")]
 
     for node in expected_nodes:
-        assert node in node_names, f"{builder_name} 그래프에 {node} 노드 없음"
+        assert node in node_names, f"podcast 그래프에 {node} 노드 없음"

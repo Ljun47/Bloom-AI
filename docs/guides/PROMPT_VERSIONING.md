@@ -6,12 +6,12 @@
 
 ## 버전 핀닝
 
-### 현재 핀닝 버전 (2026-03-13)
+### 현재 핀닝 버전 (2026-04-13 최종 확정, Round 4)
 
 | 에이전트 | 핀닝 버전 | 설정 위치 |
 |---------|---------|----------|
 | Content Analyzer | v2.1.0 | `config/settings.yaml` → `prompts.versions.content_analyzer` |
-| Podcast Reasoning | v3.0.0 | `config/settings.yaml` → `prompts.versions.podcast_reasoning` |
+| Podcast Reasoning | v3.1.0 | `config/settings.yaml` → `prompts.versions.podcast_reasoning` |
 | Batch Validator | v2.3.0 | `config/settings.yaml` → `prompts.versions.batch_validator` |
 | 기타 에이전트 | v1.0.0 | `prompts.versions.default` 기본값 |
 
@@ -24,7 +24,7 @@ prompts:
   versions:
     default: "1.0.0"              # 글로벌 기본
     content_analyzer: "2.1.0"     # 에이전트별 오버라이드
-    podcast_reasoning: "3.0.0"
+    podcast_reasoning: "3.1.0"    # v3.0.0 + GoT group 필드
     batch_validator: "2.3.0"
 ```
 
@@ -107,16 +107,17 @@ dev/live_tests/results/
 - **Phase 3A**: CA/PR/BV 각각 독립 스윕 (Iter 31-52)
 - **Phase 3B-3C**: 상위 3개 조합 통계 검증 (Iter 53-58)
 - **최종 확정**: CA v2.1.0 + PR v3.0.0 + BV v2.3.0 (평균 BV 0.863 +/- 0.006)
+- **현재 핀닝**: PR v3.1.0으로 상향 (v3.0.0 + GoT group 필드 추가 — Neo4j 통합 요건)
 
 ### 종합 비교
 
 | 조합 | 프로바이더 | 평균 BV Score | 표준편차 |
 |------|----------|-------------|---------|
 | CA 2.0 + PR 2.0 + BV 1.5 | Ollama | 0.903 | 0.047 |
-| CA 2.1 + PR 3.0 + BV 2.3 | OpenAI | 0.863 | 0.006 |
+| CA 2.1 + PR 3.1 + BV 2.3 | OpenAI | 0.863 | 0.006 |
 
 > Round 4 확정 조합(OpenAI)은 점수는 소폭 낮지만 분산이 매우 작아 안정적이다.
 
 ---
 
-*마지막 업데이트: 2026-03-13*
+*마지막 업데이트: 2026-04-07*

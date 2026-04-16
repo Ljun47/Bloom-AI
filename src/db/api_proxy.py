@@ -10,11 +10,10 @@ STORAGE_MODE=proxy 또는 hybrid 모드에서 사용.
 
 from __future__ import annotations
 
-import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from src.api.backend_resources import (
-    RESOURCE_GRAPH_QUERY,
     RESOURCE_STORAGE_OBJECT,
     RESOURCE_STORAGE_UPLOAD,
     RESOURCE_VECTOR_SEARCH,
@@ -22,8 +21,9 @@ from src.api.backend_resources import (
 from src.api.client import BackendClient
 from src.api.contracts import SaveRequest
 from src.db.base import BaseGraphClient, BaseRDBClient, BaseStorageClient, BaseVectorClient
+from src.utils.logger import get_agent_logger
 
-logger = logging.getLogger(__name__)
+logger = get_agent_logger("db.api_proxy")
 
 
 class VectorProxyClient(BaseVectorClient):
@@ -42,8 +42,8 @@ class VectorProxyClient(BaseVectorClient):
     ) -> dict[str, Any]:
         """Backend API를 통해 벡터 검색을 수행한다.
 
-        TODO(backend): 4-3 벡터 검색 엔드포인트 POST /api/v1/vector/search 확인 필요
-        TODO(backend): 4-3 요청/응답 스키마 확정 필요
+        TODO(backend): 4-3 벡터 검색 엔드포인트 POST /api/vector/search 확인 필요
+        이 모드가 제대로 구성되지 않으면 vector 검색 시 오류 발생.
         """
         request = SaveRequest(
             user_id="",
@@ -56,9 +56,7 @@ class VectorProxyClient(BaseVectorClient):
                 "top_k": top_k,
                 **kwargs,
             },
-            timestamp=__import__("datetime").datetime.now(
-                __import__("datetime").timezone.utc
-            ),
+            timestamp=datetime.now(timezone.utc),
         )
         response = await self._client.save(RESOURCE_VECTOR_SEARCH, request)
         return {"success": response.success, "id": response.id}
@@ -82,9 +80,7 @@ class VectorProxyClient(BaseVectorClient):
                 "vectors": vectors,
                 "namespace": namespace,
             },
-            timestamp=__import__("datetime").datetime.now(
-                __import__("datetime").timezone.utc
-            ),
+            timestamp=datetime.now(timezone.utc),
         )
         response = await self._client.save(RESOURCE_VECTOR_SEARCH, request)
         return {"success": response.success, "id": response.id}
@@ -111,23 +107,14 @@ class GraphProxyClient(BaseGraphClient):
     ) -> list[dict[str, Any]]:
         """Backend API를 통해 그래프 쿼리를 실행한다.
 
-        TODO(backend): 4-3 그래프 쿼리 엔드포인트 POST /api/v1/graph/query 확인 필요
-        TODO(backend): 4-3 Cypher 쿼리 프록시 가능 여부 확인
+        graph/query 엔드포인트가 Backend에 미구현 상태이므로 빈 결과를 반환한다.
+        Neo4j 직접 연결(local 모드)이 필요한 경우 storage.mode를 local로 설정할 것.
         """
-        request = SaveRequest(
-            user_id="",
-            session_id="",
-            type="graph_query",
-            data={
-                "query": query,
-                "params": params or {},
-            },
-            timestamp=__import__("datetime").datetime.now(
-                __import__("datetime").timezone.utc
-            ),
+        logger.debug(
+            "GraphProxyClient.execute_query: graph/query 미구현 — 빈 결과 반환 (query=%s)",
+            query[:80] if query else "",
         )
-        response = await self._client.save(RESOURCE_GRAPH_QUERY, request)
-        return [{"success": response.success, "id": response.id}]
+        return []
 
     async def close(self) -> None:
         """BackendClient 리소스를 정리한다."""
@@ -172,9 +159,7 @@ class RDBProxyClient(BaseRDBClient):
             session_id="",
             type="rdb_execute",
             data={"query": query, "params": params},
-            timestamp=__import__("datetime").datetime.now(
-                __import__("datetime").timezone.utc
-            ),
+            timestamp=datetime.now(timezone.utc),
         )
         response = await self._client.save("data", request)
         return 1 if response.success else 0
@@ -215,8 +200,8 @@ class StorageProxyClient(BaseStorageClient):
     ) -> dict[str, Any]:
         """Backend API를 통해 S3에 업로드한다.
 
-        TODO(backend): 4-4 이미지 업로드 엔드포인트 POST /api/v1/storage/upload 확인
-        TODO(backend): 4-4 바이너리 데이터 전송 방식 확정 (base64 vs multipart)
+        TODO(backend): 4-4 이미지 업로드 엔드포인트 POST /api/storage/upload 확인
+        (현재 이미지 저장 요구사항이 없으나 확장을 위해 남겨둠) 데이터 전송 방식 확정
         """
         import base64
 
@@ -229,9 +214,7 @@ class StorageProxyClient(BaseStorageClient):
                 "content": base64.b64encode(data).decode(),
                 "content_type": content_type,
             },
-            timestamp=__import__("datetime").datetime.now(
-                __import__("datetime").timezone.utc
-            ),
+            timestamp=datetime.now(timezone.utc),
         )
         response = await self._client.save(RESOURCE_STORAGE_UPLOAD, request)
         return {"success": response.success, "id": response.id}

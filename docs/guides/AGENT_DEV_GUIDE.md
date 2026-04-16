@@ -11,7 +11,7 @@ Mind-Log 에이전트를 구현할 때 참고하는 실무 가이드입니다.
 
 - [ ] **BaseAgent 상속** + `__init__(name, tier)` 설정
 - [ ] **`process(state: AgentState) -> dict[str, Any]`** 구현 — 자기 담당 필드만 반환
-- [ ] **모듈 하단** 싱글톤 인스턴스 + `_node()` 래퍼 함수 작성
+- [ ] **모듈 하단** 노드 함수 작성 (요청별 인스턴스 생성 패턴)
 - [ ] **프롬프트 YAML** 작성: `prompts/{mode}/{name}.yaml`
 - [ ] **테스트** 작성: `tests/agents/{mode}/test_{name}.py`
 - [ ] **workflow.py stub 교체** (→ 섹션 6 참조)
@@ -26,10 +26,10 @@ Mind-Log 에이전트를 구현할 때 참고하는 실무 가이드입니다.
 
 ```python
 """
-Context Agent — 대화 맥락 분석.
+Emotion Agent — 감정 벡터 분석.
 
 TIER 1 (병렬) | 모델: Haiku
-담당: 개발자3
+담당: 개발자2
 """
 from __future__ import annotations
 
@@ -39,31 +39,37 @@ from src.agents.shared.base_agent import BaseAgent
 from src.models.agent_state import AgentState
 
 
-class ContextAgent(BaseAgent):
-    """대화 맥락을 분석하여 주제, 흐름, 참여도를 판단한다."""
+class EmotionAgent(BaseAgent):
+    """사용자 발화에서 감정 벡터(강도, 복잡도, 유형)를 분석한다."""
 
     def __init__(self) -> None:
-        super().__init__(name="context", tier=1)
+        super().__init__(name="emotion", tier=1)
+        # BaseAgent.__init__이 자동으로 수행:
+        #   - LLMClient 초기화 (settings.yaml 기반 모델/프로바이더 자동 결정)
+        #   - PromptLoader로 prompts/{mode}/{name}.yaml 프롬프트 자동 로딩
+        #   - A/B 테스트 설정 로딩 (settings.yaml prompts.ab_tests 참조)
 
     async def process(self, state: AgentState) -> dict[str, Any]:
         user_input = state["user_input"]
 
-        # BaseAgent.call_llm_json: 모델은 settings.yaml에서 자동 결정
+        # call_llm_json: JSON 응답 + LLM 호출 횟수 자동 추적
+        # call_llm: 텍스트 응답 + LLM 호출 횟수 자동 추적
+        # get_prompt("키"): 자동 로딩된 프롬프트에서 키로 조회
         result = await self.call_llm_json(
             system_message=self.get_prompt("system_prompt"),
             user_message=user_input,
         )
 
-        return {"context": result}
+        return {"emotion_vectors": result}
 
 
-# --- 싱글톤 + 노드 래퍼 ---
-context_agent = ContextAgent()
-
-
-async def context_node(state: AgentState) -> dict[str, Any]:
-    """LangGraph 노드 — Context Agent."""
-    return await context_agent(state)
+# --- 노드 함수 (요청별 인스턴스 생성) ---
+async def emotion_node(state: AgentState) -> dict[str, Any]:
+    """LangGraph 노드 — Emotion Agent.
+    요청마다 새 인스턴스를 생성하여 동시 요청 간 상태를 격리한다.
+    """
+    agent = EmotionAgent()
+    return await agent(state)
 ```
 
 ### 다중 프롬프트(GoT/ToT/CoT) 에이전트
@@ -138,13 +144,13 @@ class ReasoningAgent(BaseAgent):
         return {"reasoning_result": result}
 
 
-# --- 싱글톤 + 노드 래퍼 ---
-reasoning_agent = ReasoningAgent()
-
-
+# --- 노드 함수 (요청별 인스턴스 생성) ---
 async def reasoning_node(state: AgentState) -> dict[str, Any]:
-    """LangGraph 노드 — Reasoning Agent."""
-    return await reasoning_agent(state)
+    """LangGraph 노드 — Reasoning Agent.
+    요청마다 새 인스턴스를 생성하여 동시 요청 간 상태를 격리한다.
+    """
+    agent = ReasoningAgent()
+    return await agent(state)
 ```
 
 ### 독립 에이전트 (DI — 의존성 주입)
@@ -154,8 +160,8 @@ StateGraph 노드가 아닌 **독립 에이전트**로 DI 패턴을 따릅니다
 
 ```python
 # Reasoning Agent 생성 시 독립 에이전트 주입
-from src.agents.conversation.memory import MemoryAgent
-from src.agents.conversation.knowledge import KnowledgeAgent
+from src.agents.podcast.memory import MemoryAgent
+from src.agents.podcast.knowledge import KnowledgeAgent
 
 reasoning = ReasoningAgent(
     memory_agent=MemoryAgent(),       # 실제 구현
@@ -180,13 +186,11 @@ reasoning = ReasoningAgent(
 ```
 prompts/
 ├── podcast/         # 팟캐스트모드 전용
-├── conversation/    # 대화모드 전용
-└── shared/          # 공용 에이전트 (양쪽 모드)
+└── shared/          # 공용 에이전트
 ```
 
 `BaseAgent._resolve_mode()`가 모듈 경로에서 모드를 자동 추론합니다:
 - `src/agents/podcast/*.py` → `prompts/podcast/`
-- `src/agents/conversation/*.py` → `prompts/conversation/`
 - `src/agents/shared/*.py` → `prompts/shared/`
 
 ### 단일 프롬프트 형식
@@ -294,11 +298,11 @@ from unittest.mock import AsyncMock, patch
 
 @pytest.mark.asyncio
 async def test_process_returns_expected_field(
-    agent: ContextAgent,
+    agent: EmotionAgent,
     base_state: AgentState,
 ) -> None:
-    """process()가 context 필드를 반환하는지 확인."""
-    mock_response = {"current_topic": "직장 스트레스", "user_engagement": "high"}
+    """process()가 emotion_vectors 필드를 반환하는지 확인."""
+    mock_response = {"primary_emotion": "anxiety", "intensity": 0.7}
 
     with patch.object(
         agent, "call_llm_json",
@@ -307,8 +311,8 @@ async def test_process_returns_expected_field(
     ):
         result = await agent.process(base_state)
 
-    assert "context" in result
-    assert result["context"]["current_topic"] == "직장 스트레스"
+    assert "emotion_vectors" in result
+    assert result["emotion_vectors"]["primary_emotion"] == "anxiety"
 ```
 
 ### AgentState Fixture
@@ -321,7 +325,7 @@ def base_state() -> AgentState:
         user_input="요즘 스트레스를 많이 받아요.",
         user_id="test_user_001",
         session_id="sess_test_001",
-        mode="conversation",
+        mode="podcast",
     )
 ```
 
@@ -335,7 +339,7 @@ async def test_only_returns_own_field(agent, base_state):
     with patch.object(agent, "call_llm_json", new_callable=AsyncMock, return_value={}):
         result = await agent.process(base_state)
 
-    assert list(result.keys()) == ["context"]  # 자기 필드만
+    assert list(result.keys()) == ["emotion_vectors"]  # 자기 필드만
 ```
 
 ### 엣지케이스 체크리스트
@@ -357,7 +361,7 @@ Safety, Emotion 등은 대화모드와 팟캐스트모드 모두에서 사용됩
 ```python
 class SafetyAgent(BaseAgent):
     async def process(self, state: AgentState) -> dict[str, Any]:
-        mode = state.get("mode", "conversation")
+        mode = state.get("mode", "podcast")
 
         if mode == "podcast":
             # 팟캐스트 특화 안전 검사
@@ -383,31 +387,8 @@ prompts/shared/emotion.yaml    ← 공용 Emotion Agent
 
 ## 6. workflow.py 노드 등록 방법
 
-에이전트 구현이 완료되면 `src/graph/workflow.py`의 stub을 교체합니다.
-
-### 교체 절차
-
-**1단계: 실제 import 추가**
-
-```python
-# workflow.py 상단 — 구현된 에이전트 노드 import
-from src.agents.conversation.context import context_node      # 개발자3
-from src.agents.conversation.reasoning import reasoning_node  # 개발자3
-```
-
-**2단계: stub 노드 함수 제거**
-
-```python
-# 아래 코드를 삭제:
-async def context_node(state: AgentState) -> dict[str, Any]:
-    """[STUB] Context Agent — 개발자3 구현 예정."""
-    return await _stub_node("context", state)
-```
-
-**3단계: workflow.py는 Protected File**
-
-`workflow.py` 수정은 3인 합의가 필요합니다.
-PR 생성 시 개발자 3명 전원의 리뷰를 받으세요.
+> 워크플로우 노드 등록 규칙과 인터페이스는 [CLAUDE.md](../../CLAUDE.md#langgraph-워크플로우)를 참조하세요.
+> `workflow.py`는 Protected File이므로 수정 시 3인 합의가 필요합니다.
 
 ---
 
@@ -434,4 +415,62 @@ PR 생성 시 개발자 3명 전원의 리뷰를 받으세요.
 
 ---
 
-*마지막 업데이트: 2026-03-13*
+## 8. 공용 유틸리티 (context_utils)
+
+에이전트 구현 시 반복되는 패턴을 통합한 유틸리티 모듈.
+위치: `src/agents/shared/context_utils.py`
+
+### build_section(label, data, keys)
+
+dict에서 지정된 키를 추출하여 LLM 컨텍스트 섹션으로 포맷한다.
+
+```python
+from src.agents.shared.context_utils import build_section
+
+# 감정 분석 결과를 컨텍스트로 변환
+section = build_section("감정 분석", emotion_vectors, keys=["primary_emotion", "intensity"])
+# 결과: "[감정 분석]\n- primary_emotion: 불안\n- intensity: 0.8"
+```
+
+### build_context(*sections)
+
+비어있지 않은 섹션들을 `\n\n`으로 결합한다.
+
+```python
+from src.agents.shared.context_utils import build_context, build_section
+
+context = build_context(
+    build_section("감정 분석", emotion_vectors),
+    build_section("콘텐츠 분석", content_analysis, keys=["main_theme", "depth_level"]),
+)
+```
+
+### clamp(value, lo, hi, default)
+
+숫자 값을 범위 내로 제한한다. 타입 변환 실패 시 default를 반환.
+
+```python
+from src.agents.shared.context_utils import clamp
+
+intensity = clamp(raw_intensity, 0.0, 1.0, default=0.5)
+duration = clamp(target_duration, min_duration, max_duration)
+```
+
+### BaseAgent._load_agent_config(defaults)
+
+`settings.yaml`에서 에이전트별 설정을 로드하고 기본값과 병합한다.
+각 에이전트의 `_load_config()`에서 호출.
+
+```python
+def _load_config(self) -> None:
+    cfg = self._load_agent_config({
+        "full_threshold": 0.8,
+        "standard_threshold": 0.5,
+    })
+    self.full_threshold = cfg["full_threshold"]
+    self.standard_threshold = cfg["standard_threshold"]
+```
+
+---
+
+*마지막 업데이트: 2026-04-14 11:00*

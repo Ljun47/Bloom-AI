@@ -19,27 +19,15 @@ TIER 4 (Personalizer)   → 9~22 KB
 Peak State Size: 19~37 KB
 ```
 
-### 대화 모드
-
-```
-TIER 0 (Intent)         → 0.3~0.5 KB
-TIER 1 (병렬 4개)       → ~8~12 KB (Safety + Emotion + Context + Reasoning)
-TIER 2 (Synthesis)      → 0.5~2 KB
-TIER 3 (Validator)      → 0.3~0.5 KB
-TIER 4 (Personalization)→ 0.5~2 KB
-Peak State Size: ~12~18 KB (추정, 미구현)
-```
-
 ---
 
 ## 구현 현황
 
 | 상태 | 에이전트 |
 |------|----------|
-| **구현 완료 (10개)** | Intent Classifier, Safety, Emotion, Knowledge, Content Analyzer, Podcast Reasoning, Script Generator, Batch Validator, Script Personalizer, Visualization |
+| **구현 완료 (11개)** | Intent Classifier, Safety, Emotion, Knowledge, Content Analyzer, Podcast Reasoning, Script Generator, Batch Validator, Script Personalizer, Visualization, Episode Memory |
 | **공용 구현 완료 (1개)** | Learning |
-| **미구현 (8개)** | Context, Reasoning(대화), Memory, Synthesis, Validator(대화), Personalization, Telemetry |
-| **스텁 (1개)** | Episode Memory (BaseMemoryAgent 확장) |
+| **스텁 (0개)** | — |
 
 ---
 
@@ -48,7 +36,7 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 ### Intent Classifier -- TIER 0 / 공용
 
 - **목적**: 사용자 입력의 의도를 분류하고, 모드를 감지하며, 1차 위기 신호를 판별한다.
-- **모델**: Haiku
+- **모델**: Sonnet 3.7 (`sonnet_37`)
 - **구현 상태**: 완료
 
 **입력 (AgentState 읽기)**
@@ -67,8 +55,6 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 | `risk_level` | int (0-4) | - |
 | `risk_score` | float (0.0-1.0) | - |
 | `safety_flags` | dict | - |
-| `next_step` | str | - |
-
 **출력 스키마 (IntentClassifierOutput)**
 
 ```python
@@ -112,7 +98,7 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 ### Safety Agent -- TIER 1 (병렬) / 공용
 
 - **목적**: 사용자 입력의 위험도를 평가하고, CRISIS 시 파이프라인을 선점 중단한다.
-- **모델**: Sonnet 4
+- **모델**: Sonnet 3.7 (`sonnet_37`)
 - **구현 상태**: 완료
 
 **입력 (AgentState 읽기)**
@@ -166,7 +152,7 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 ### Emotion Agent -- TIER 1 (병렬) / 공용
 
 - **목적**: 사용자 입력의 감정을 분석하여 벡터화한다.
-- **모델**: Sonnet 4
+- **모델**: Haiku (`haiku`)
 - **구현 상태**: 완료
 
 **입력 (AgentState 읽기)**
@@ -213,7 +199,7 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 ### Content Analyzer -- TIER 1 (병렬) / 팟캐스트
 
 - **목적**: 사용자 입력을 분석하여 팟캐스트 에피소드 주제·구조·깊이를 도출한다.
-- **모델**: Sonnet 4
+- **모델**: Haiku (`haiku`)
 - **구현 상태**: 완료
 
 **입력 (AgentState 읽기)**
@@ -255,7 +241,7 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 ### Podcast Reasoning -- TIER 1 (병렬) / 팟캐스트
 
 - **목적**: GoT+ToT+CoT 3단계 추론으로 에피소드 구조·내러티브·핵심 포인트를 도출한다.
-- **모델**: Sonnet 4
+- **모델**: Sonnet 3.7 (`sonnet_37`)
 - **구현 상태**: 완료
 
 **입력 (AgentState 읽기)**
@@ -279,9 +265,12 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 
 | complexity_score | 깊이 | 전략 | LLM 호출 |
 |-----------------|------|------|----------|
-| >= 0.8 (CLAUDE.md) / >= 0.55 (settings.yaml) | full | GoT -> ToT -> CoT | 3회 |
-| >= 0.5 (CLAUDE.md) / >= 0.3 (settings.yaml) | standard | ToT -> CoT | 2회 |
-| < 0.5 / < 0.3 | minimal | CoT only | 1회 |
+| >= full_threshold | full | GoT -> ToT -> CoT | 3회 |
+| >= standard_threshold | standard | ToT -> CoT | 2회 |
+| < standard_threshold | minimal | CoT only | 1회 |
+
+> **설정값 (settings.yaml SSOT)**: `full_threshold: 0.0`, `standard_threshold: 0.0` → 모든 요청에 full 추론 적용.
+> 코드 기본값: 0.8/0.5 (settings.yaml 미설정 시 폴백).
 
 **출력 스키마**
 
@@ -314,8 +303,8 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 
 - **데이터 효율**: **5~7%** (got_result, tot_result가 7~10KB 차지하지만 다운스트림에서 미사용)
 - **알려진 이슈**:
-  - [C-1] CRITICAL: 임계값 불일치 -- CLAUDE.md(0.8/0.5) vs settings.yaml(0.55/0.3)
-  - [C-2] 토큰 예산 4096 -- 출력 7~11KB 잘림 가능성
+  - ~~[C-1]~~ RESOLVED: 임계값 — settings.yaml에서 0.0/0.0으로 설정 (항상 full 추론). 코드 기본값 0.8/0.5는 폴백용.
+  - [C-2] 토큰 예산 6000 (`max_tokens: 6000`, 4096에서 상향) -- 출력 7~11KB 잘림 가능성 감소
   - [S-5] memory_results, knowledge_results 조건부 쓰기 미문서화
 
 ---
@@ -323,8 +312,8 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 ### Episode Memory -- 독립 / 팟캐스트
 
 - **목적**: 과거 팟캐스트 에피소드 기억을 검색하여 일관성과 연속성을 확보한다.
-- **모델**: Sonnet 4 (BaseMemoryAgent 상속)
-- **구현 상태**: 스텁 (BaseMemoryAgent 확장)
+- **모델**: Sonnet 3.5 v2 (`sonnet`, BaseMemoryAgent 상속)
+- **구현 상태**: 완료 (KT Cloud RAG Suite 연동)
 
 **입력**: DI 호출 -- `search(query, user_id)`
 
@@ -341,14 +330,15 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 | Podcast Reasoning | count만 확인 | episodes, segments 상세 |
 
 - **데이터 효율**: 3~7% (count만 사용, 상세 에피소드 데이터 미사용)
-- **네임스페이스**: `mem_podcast_episode` (대화 기억과 분리)
+- **인덱스명**: `mem-podcast-episode` (하이픈, Pinecone 인덱스 식별자)
+- **네임스페이스**: `mem_podcast_episode` (언더스코어, 인덱스 내 데이터 분리)
 
 ---
 
 ### Knowledge Agent -- 독립 / 공용
 
 - **목적**: 전문 지식 DB를 검색하여 근거 기반 정보를 제공한다.
-- **모델**: Sonnet 4
+- **모델**: Sonnet 3.5 v2 (`sonnet`)
 - **구현 상태**: 완료
 
 **입력 (AgentState 읽기)**
@@ -384,7 +374,7 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 
 | 에이전트 | 사용 필드 | 미사용 필드 |
 |----------|-----------|-------------|
-| Synthesis (대화) | synthesis, recommended_approaches | documents 상세 |
+| Podcast Reasoning | synthesis, recommended_approaches | documents 상세 |
 
 - **데이터 효율**: 20~50% (synthesis만 주로 사용)
 - **알려진 이슈**:
@@ -396,7 +386,7 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 ### Script Generator -- TIER 2 / 팟캐스트
 
 - **목적**: TIER 1 분석 결과를 종합하여 팟캐스트 스크립트를 생성한다.
-- **모델**: Sonnet 4
+- **모델**: Haiku (`haiku`)
 - **구현 상태**: 완료
 
 **입력 (AgentState 읽기)**
@@ -447,7 +437,7 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 ### Batch Validator -- TIER 3 / 팟캐스트
 
 - **목적**: 스크립트 초안의 품질을 5가지 기준으로 검증하고, 실패 시 재시도를 라우팅한다.
-- **모델**: Sonnet 4
+- **모델**: Haiku (`haiku`)
 - **구현 상태**: 완료
 
 **입력 (AgentState 읽기)**
@@ -466,12 +456,11 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 | 필드 | 타입 | 크기 |
 |------|------|------|
 | `validation_result` | dict | 0.2~0.6 KB |
-| `next_step` | str | - |
 | `iteration_count` | int (조건부) | - |
 
 **검증 기준**: completeness, quality, safety compliance, emotional tone fit, coherence
 
-**재시도 로직**: `MAX_RETRIES = 2` (하드코딩) -- 실패 시 retry_script, 초과 시 forced_pass
+**재시도 로직**: `max_retries` = settings.yaml `agents.batch_validator.max_retries` (기본값 2) -- 실패 시 retry_script, 초과 시 forced_pass
 
 **소비자**
 
@@ -488,7 +477,7 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 ### Script Personalizer -- TIER 4 / 팟캐스트
 
 - **목적**: 사용자 프로필 기반으로 스크립트의 톤·스타일·접근성을 조정한다.
-- **모델**: Sonnet 4
+- **모델**: Sonnet 3.7 (`sonnet_37`)
 - **구현 상태**: 완료
 
 **입력 (AgentState 읽기)**
@@ -528,30 +517,31 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 
 - **데이터 효율**: 100%
 - **알려진 이슈**:
-  - [B-5] emotional_journey = None 하드코딩
+  - ~~[B-5]~~ RESOLVED: emotional_journey — content_analysis에서 조건부 로드 (None 하드코딩 제거)
   - [S-6] final_output을 model_dump_json() 문자열로 반환 (다른 에이전트는 dict)
-  - [C-5] deep_personalization 플래그 settings.yaml 미등록
+  - ~~[C-5]~~ RESOLVED: deep_personalization 플래그 settings.yaml 등록 완료 (`agents.script_personalizer.deep_personalization`)
 
 ---
 
 ### Visualization Agent -- TIER 2 (병렬) / 공용
 
-- **목적**: 감정 벡터 기반으로 시각화 이미지 메타데이터와 해석 텍스트를 생성한다.
-- **모델**: Sonnet 4
+- **목적**: 감정 벡터 기반으로 시각화 이미지를 생성하고 S3에 업로드한다.
+- **모델**: Haiku (`haiku`, 기획 LLM) + Amazon Titan Image Generator v2 (이미지 생성)
 - **구현 상태**: 완료
 - **TIER 위치**: TIER 2 — Script Generator와 병렬 실행 (`tier2_podcast_fan_out`)
 - **재시도 동작**: `visual_data`가 이미 state에 존재하면 건너뜀 (TIER 3 실패 → TIER 2 재시도 시 중복 방지)
 - **실패 허용**: Visualization 실패 시 파이프라인에 영향 없음 (Script Generator 결과만 필수)
+- **설정 기반**: 모든 런타임 값(모델/버킷/리전/경로/재시도)은 `config/settings.yaml`에서 관리. 코드 내 하드코딩 없음 (v26)
+- **스킵 모드**: `SKIP_VISUALIZATION=true` 환경변수로 이미지 생성 건너뜀 (테스트/배포 시 비용 절감)
 
 **입력 (AgentState 읽기)**
 
 | 필드 | 출처 | 필수 |
 |------|------|------|
 | `emotion_vectors` | Emotion Agent | O |
-| `safety_flags` | Safety Agent | O |
+| `content_analysis` | Content Analyzer | O |
 | `mode` | Intent Classifier | O |
-| `session_id` | 세션 | O |
-| `final_output` / `script_draft` | 여러 | X (우선순위 폴백) |
+| `user_id` | 세션 | O |
 
 **출력 (AgentState 쓰기)**
 
@@ -559,16 +549,43 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 |------|------|------|
 | `visual_data` | dict | 1~2 KB |
 
+**출력 스키마**:
+```python
+{
+    "visual_data": {
+        "image_url": str | None,     # S3 URL
+        "status": "completed" | "failed" | "skipped",
+        "retry_count": int,
+        "error": str | None,
+        "style_type": str,           # LLM 기획 결과
+        "interpretation": str,       # LLM 해석 텍스트
+        "original_prompt": str,      # 이미지 생성 프롬프트
+    }
+}
+```
+
+**settings.yaml 설정**:
+```yaml
+agents:
+  visualization:
+    model: sonnet                                     # 기획 LLM
+    max_tokens: 2048
+    image_model: "amazon.titan-image-generator-v2:0"  # 이미지 생성 모델
+    image_region: "us-east-1"                         # 이미지 모델 리전 (서울에 없음)
+```
+
 - **데이터 효율**: 100%
 - **알려진 이슈**:
-  - ~~[S-2] `visualization_result` 반환 vs AgentState `visual_data` 정의 -- 키 이름 불일치~~ (RESOLVED: visualization.py:64에서 수정됨)
+  - ~~[S-2] `visualization_result` 반환 vs AgentState `visual_data` 정의 -- 키 이름 불일치~~ (RESOLVED: v10에서 수정됨)
+  - ~~[S-3] 하드코딩 6건 (모델/버킷/리전/경로/재시도) -- settings.yaml 미사용~~ (RESOLVED: v26에서 전면 제거)
+  - ~~[S-4] `call_llm_json(model=...)` TypeError -- LLMClient가 model 파라미터 미지원~~ (RESOLVED: v26에서 model 파라미터 제거)
 
 ---
 
 ### Learning Agent -- 비동기 / 공용
 
 - **목적**: 사용자 선호·감정 패턴·응답 효과를 분석하여 백엔드에 저장한다.
-- **모델**: Haiku
+- **모델**: Sonnet 3.5 v2 (`sonnet`)
 - **구현 상태**: 완료
 
 **입력**: AgentState 전체 읽기 (read-only)
@@ -576,58 +593,6 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 **출력**: 빈 dict `{}` (AgentState 변경 없음, 백엔드 API로 직접 저장)
 
 - **데이터 효율**: N/A (출력 없음)
-
----
-
-### 미구현 에이전트 (대화모드 전용)
-
-아래 에이전트는 아직 구현되지 않았으며, CLAUDE.md 설계 사양을 기준으로 기술합니다.
-
-#### Context Agent -- TIER 1 (병렬) / 대화
-
-- **목적**: 대화 맥락을 관리하고, 주제 연속성·사용자 상태를 분석한다.
-- **모델**: Haiku
-- **출력 필드**: `context` (dict)
-- **소비자**: Reasoning Agent, Synthesis Agent
-
-#### Reasoning Agent -- TIER 1 (병렬) / 대화
-
-- **목적**: GoT/ToT/CoT 추론으로 대화 맥락을 분석하고 응답 방향을 도출한다.
-- **모델**: Opus 4.6
-- **출력 필드**: `reasoning_result` (dict), `memory_results` (조건부), `knowledge_results` (조건부)
-- **소비자**: Synthesis Agent, Validator Agent
-
-#### Memory Agent -- 독립 / 대화
-
-- **목적**: 개인 대화 기억을 검색한다.
-- **모델**: Sonnet 4
-- **출력 필드**: `memory_results` (dict)
-- **네임스페이스**: `mem_conversation` (팟캐스트와 분리)
-
-#### Synthesis Agent -- TIER 2 / 대화
-
-- **목적**: TIER 1 결과를 종합하여 응답 내용을 생성한다 (톤 조정 없음).
-- **모델**: Sonnet 4
-- **출력 필드**: `response_draft` (str)
-- **소비자**: Validator Agent
-
-#### Validator Agent -- TIER 3 / 대화
-
-- **목적**: 응답 초안의 품질을 검증한다. 실패 시 TIER 2 재시도 (최대 2회).
-- **모델**: Sonnet 4
-- **출력 필드**: `validation_result` (dict), `next_step` (str), `iteration_count` (int)
-
-#### Personalization Agent -- TIER 4 / 대화
-
-- **목적**: 톤/스타일 조정의 단독 책임자. Safety 경고 톤 강화 포함.
-- **모델**: Sonnet 4
-- **출력 필드**: `final_output` (str)
-
-#### Telemetry Agent -- 비동기 / 공용
-
-- **목적**: 에이전트 실행 메트릭·파이프라인 성능을 기록한다.
-- **모델**: Haiku
-- **출력**: 빈 dict (백엔드에 직접 저장)
 
 ---
 
@@ -665,11 +630,11 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 
 | # | 심각도 | 이슈 | 파일 | 담당 |
 |---|--------|------|------|------|
-| B-1 | CRITICAL | Conversation/Podcast 그래프 TIER 0 건너뜀 | workflow.py:609,659 | 3인합의 |
-| B-2 | CRITICAL | Crisis Deep Response TODO 스텁 | workflow.py:225~248 | 개발자2 |
+| B-1 | ~~CRITICAL~~ RESOLVED | Conversation/Podcast 그래프 TIER 0 건너뜀 — 대화모드 제거 완료 (PR #45) | workflow.py | 3인합의 |
+| B-2 | ~~CRITICAL~~ RESOLVED | Crisis Deep Response — `required_in_script` 활용으로 법적 고지/상담 번호 전달 (v26) | workflow.py:278~301 | 개발자2 |
 | B-3 | HIGH | 이중 위험평가 (Intent + Safety 중복) | intent_classifier.py, safety.py | 개발자1+2 |
 | B-4 | HIGH | Safety/Emotion이 전체 intent dict를 LLM에 전달 (200~400토큰 낭비) | safety.py:54, emotion.py:36 | 개발자2 |
-| B-5 | MEDIUM | Script Personalizer emotional_journey = None 하드코딩 | script_personalizer.py:83 | 개발자1 |
+| B-5 | ~~MEDIUM~~ RESOLVED | Script Personalizer emotional_journey — content_analysis에서 조건부 로드 | script_personalizer.py | 개발자1 |
 | B-7 | MEDIUM | Knowledge Agent domain_hints 미전달 | knowledge.py | 개발자1 |
 | B-8 | LOW | CONTRIBUTING.md 노드 시그니처 불일치 | CONTRIBUTING.md:58 | 문서 (수정 완료) |
 
@@ -689,19 +654,19 @@ Peak State Size: ~12~18 KB (추정, 미구현)
 
 | # | 심각도 | 이슈 | 위치 |
 |---|--------|------|------|
-| C-1 | CRITICAL | Podcast Reasoning 임계값 불일치: CLAUDE.md(0.8/0.5) vs settings.yaml(0.55/0.3) | settings.yaml, CLAUDE.md |
-| C-2 | HIGH | 토큰 예산 부족: podcast_reasoning(4096), script_generator(4096) | settings.yaml |
-| C-3 | MEDIUM | TIER 타임아웃 settings.yaml 정의 but workflow.py 미적용 | workflow.py |
-| C-4 | MEDIUM | batch_validator MAX_RETRIES 하드코딩 (settings 미참조) | batch_validator.py |
-| C-5 | MEDIUM | deep_personalization 플래그 settings.yaml 미등록 | script_personalizer.py |
+| C-1 | ~~CRITICAL~~ RESOLVED | Podcast Reasoning 임계값 — settings.yaml 0.0/0.0 (항상 full), 코드 기본값 0.8/0.5 폴백 | settings.yaml |
+| C-2 | HIGH → MEDIUM | 토큰 예산: podcast_reasoning 6000으로 상향, script_generator 4096 유지 | settings.yaml |
+| C-3 | ~~MEDIUM~~ RESOLVED | TIER 타임아웃 — settings.yaml에서 로드, workflow.py asyncio.wait_for() 적용 완료 (PR #60) | workflow.py |
+| C-4 | ~~MEDIUM~~ RESOLVED | batch_validator max_retries — settings.yaml에서 로드 (`cfg.get("max_retries", 2)`) | batch_validator.py |
+| C-5 | ~~MEDIUM~~ RESOLVED | deep_personalization 플래그 settings.yaml 등록 완료 | settings.yaml |
 
 ### 프롬프트 YAML 상태
 
 | # | 심각도 | 이슈 |
 |---|--------|------|
-| P-1 | HIGH | shared/ + conversation/ 15개 YAML이 [TODO] 스텁 (대화모드 구현 시 작성 필요) |
+| P-1 | ~~HIGH~~ RESOLVED | shared/ + conversation/ YAML 전체 삭제됨 (PR #45, 대화모드 제거) |
 | P-2 | PASS | 팟캐스트 모드 7개 YAML -- 출력스키마, 역할, 변수주입 모두 일치 |
 
 ---
 
-*마지막 업데이트: 2026-03-13*
+*마지막 업데이트: 2026-04-07*

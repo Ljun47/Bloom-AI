@@ -52,7 +52,7 @@ def test_estimate_cost(
     "kwargs, expected_session, expected_mode",
     [
         ({}, "", ""),
-        ({"session_id": "sess_001", "mode": "conversation"}, "sess_001", "conversation"),
+        ({"session_id": "sess_001", "mode": "podcast"}, "sess_001", "podcast"),
     ],
     ids=["default", "with_params"],
 )
@@ -85,31 +85,8 @@ def test_on_chain_start_records_time_and_metadata() -> None:
 # === on_chain_end 테스트 ===
 
 
-def test_on_chain_end_records_tier_duration() -> None:
-    """on_chain_end가 TIER 실행 시간을 기록한다."""
-    cb = MindLogTelemetryCallback()
-    run_id = uuid.uuid4()
-    cb.on_chain_start({"name": "safety"}, {}, run_id=run_id)
-    cb._node_start_times[str(run_id)] -= 0.1
-
-    cb.on_chain_end(
-        {"safety_flags": {"status": "safe"}},
-        run_id=run_id,
-        tags=["safety"],
-    )
-    assert "tier1" in cb.metrics.tier_durations
-    assert cb.metrics.tier_durations["tier1"] >= 100
-
-
-def test_on_chain_end_no_start_is_ignored() -> None:
-    """on_chain_start 없이 on_chain_end 호출 시 무시된다."""
-    cb = MindLogTelemetryCallback()
-    cb.on_chain_end({}, run_id=uuid.uuid4(), tags=["safety"])
-    assert cb.metrics.tier_durations == {}
-
-
-def test_tier_duration_uses_max_for_parallel() -> None:
-    """같은 TIER의 여러 에이전트 중 최대 실행 시간이 기록된다."""
+def test_on_chain_end_tier_duration_single_and_parallel() -> None:
+    """단일 에이전트 + 병렬 에이전트 TIER 실행 시간 기록 (max 사용)."""
     cb = MindLogTelemetryCallback()
 
     run1 = uuid.uuid4()
@@ -120,10 +97,24 @@ def test_tier_duration_uses_max_for_parallel() -> None:
     cb.on_chain_start({"name": "emotion"}, {}, run_id=run2)
     cb._node_start_times[str(run2)] -= 0.2
 
-    cb.on_chain_end({}, run_id=run1, tags=["safety"])
-    cb.on_chain_end({}, run_id=run2, tags=["emotion"])
+    cb.on_chain_end(
+        {"safety_flags": {"status": "safe"}},
+        run_id=run1,
+        tags=["safety"],
+    )
+    assert "tier1" in cb.metrics.tier_durations
+    assert cb.metrics.tier_durations["tier1"] >= 100
 
+    cb.on_chain_end({}, run_id=run2, tags=["emotion"])
+    # 병렬 시 max 적용
     assert cb.metrics.tier_durations["tier1"] >= 200
+
+
+def test_on_chain_end_no_start_is_ignored() -> None:
+    """on_chain_start 없이 on_chain_end 호출 시 무시된다."""
+    cb = MindLogTelemetryCallback()
+    cb.on_chain_end({}, run_id=uuid.uuid4(), tags=["safety"])
+    assert cb.metrics.tier_durations == {}
 
 
 # === CRISIS / 이벤트 테스트 ===
@@ -137,9 +128,7 @@ def test_tier_duration_uses_max_for_parallel() -> None:
     ],
     ids=["crisis", "safe"],
 )
-def test_crisis_detection(
-    safety_status: str, risk_level: int, expect_crisis: bool
-) -> None:
+def test_crisis_detection(safety_status: str, risk_level: int, expect_crisis: bool) -> None:
     """Safety 판정에 따라 CRISIS 이벤트가 기록된다."""
     cb = MindLogTelemetryCallback(session_id="sess_test")
     run_id = uuid.uuid4()
@@ -184,7 +173,7 @@ def test_on_chain_error_records_event() -> None:
 
 def test_add_agent_metric_and_get_summary() -> None:
     """add_agent_metric → get_summary 전체 라이프사이클을 검증한다."""
-    cb = MindLogTelemetryCallback(session_id="sess_001", mode="conversation")
+    cb = MindLogTelemetryCallback(session_id="sess_001", mode="podcast")
     metric = AgentMetric(
         agent_name="safety",
         tier=1,
@@ -207,7 +196,7 @@ def test_add_agent_metric_and_get_summary() -> None:
     # get_summary 확인
     summary = cb.get_summary()
     assert summary["session_id"] == "sess_001"
-    assert summary["mode"] == "conversation"
+    assert summary["mode"] == "podcast"
     assert summary["agent_count"] == 1
     assert summary["total_llm_calls"] == 1
     assert summary["estimated_cost_usd"] > 0
@@ -219,7 +208,10 @@ def test_get_summary_with_error_agents() -> None:
     cb = MindLogTelemetryCallback()
     cb.add_agent_metric(
         AgentMetric(
-            "reasoning", 1, 500, 2,
+            "reasoning",
+            1,
+            500,
+            2,
             model_id="claude-opus-4-6",
             status="error",
             error_message="timeout",

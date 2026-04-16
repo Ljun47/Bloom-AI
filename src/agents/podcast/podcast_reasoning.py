@@ -21,12 +21,35 @@ Episode Memory(개발자2)와 Knowledge Agent(개발자1)를
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
-from config.loader import get_settings
 from src.agents.shared.base_agent import BaseAgent
-from src.agents.shared.stubs import EpisodeMemoryStub, KnowledgeAgentStub
 from src.models.agent_state import AgentState
+
+# DI fallback — 실제 에이전트 (lazy import로 순환 참조 방지)
+_EpisodeMemoryAgent: type | None = None
+_KnowledgeAgent: type | None = None
+
+
+def _get_episode_memory_agent_class() -> type:
+    """EpisodeMemoryAgent를 lazy import한다."""
+    global _EpisodeMemoryAgent  # noqa: PLW0603
+    if _EpisodeMemoryAgent is None:
+        from src.agents.podcast.episode_memory import EpisodeMemoryAgent
+
+        _EpisodeMemoryAgent = EpisodeMemoryAgent
+    return _EpisodeMemoryAgent
+
+
+def _get_knowledge_agent_class() -> type:
+    """KnowledgeAgent를 lazy import한다."""
+    global _KnowledgeAgent  # noqa: PLW0603
+    if _KnowledgeAgent is None:
+        from src.agents.podcast.knowledge import KnowledgeAgent
+
+        _KnowledgeAgent = KnowledgeAgent
+    return _KnowledgeAgent
+
 
 # 추론 깊이 타입 — complexity_score에 따라 결정
 ReasoningDepth = Literal["full", "standard", "minimal"]
@@ -45,8 +68,8 @@ class PodcastReasoningAgent(BaseAgent):
     개인화된 에피소드 경험과 전문 지식을 통합한다.
 
     Args:
-        episode_memory: Episode Memory 에이전트 (DI — 없으면 stub 사용)
-        knowledge_agent: Knowledge Agent (DI — 없으면 stub 사용)
+        episode_memory: Episode Memory 에이전트 (DI — 없으면 EpisodeMemoryAgent 사용)
+        knowledge_agent: Knowledge Agent (DI — 없으면 KnowledgeAgent 사용)
     """
 
     def __init__(
@@ -55,9 +78,9 @@ class PodcastReasoningAgent(BaseAgent):
         knowledge_agent: Any | None = None,
     ) -> None:
         super().__init__(name="podcast_reasoning", tier=1)
-        # 의존성 주입 — 통합 전에는 stub 사용
-        self.episode_memory = episode_memory or EpisodeMemoryStub()
-        self.knowledge_agent = knowledge_agent or KnowledgeAgentStub()
+        # 의존성 주입 — DI 미전달 시 실제 에이전트로 fallback
+        self.episode_memory = episode_memory or _get_episode_memory_agent_class()()
+        self.knowledge_agent = knowledge_agent or _get_knowledge_agent_class()()
         self._load_config()
 
     async def process(self, state: AgentState) -> dict[str, Any]:
@@ -79,7 +102,37 @@ class PodcastReasoningAgent(BaseAgent):
             같은 TIER 1에서 병렬 실행되므로 이 에이전트에서 참조하지 않는다.
             Podcast Reasoning은 user_input과 intent만으로 독립적으로 추론한다.
         """
-        user_input = state["user_input"]
+        user_input = state.get("user_input", "")
+        if not user_input:
+            self.logger.error("[PodcastReasoning] user_input 없음")
+            return {
+                "reasoning_result": {
+                    "episode_structure": [],
+                    "key_themes": [],
+                    "emotional_arc": {},
+                    "confidence": 0.0,
+                    "reasoning_depth": "minimal",
+                    "error": "user_input_missing",
+                }
+            }
+
+        # CRISIS 폴백 — Intent Classifier(TIER 0)의 1차 위기 감지 신호를 보고 추론 스킵
+        # TIER 1 병렬 실행이라 Safety 결과는 못 받으므로 risk_level(int)만 참조한다.
+        # CRISIS 시 reasoning은 후속 단계에서 사용되지 않으므로(TIER 2~4 모두 폴백) 스킵해도 안전.
+        if state.get("risk_level", 0) >= 4:
+            self.logger.info("[PodcastReasoning] CRISIS 감지 — reasoning 스킵 (LLM 미호출)")
+            return {
+                "reasoning_result": {
+                    "episode_structure": [],
+                    "narrative_flow": "",
+                    "key_points": [],
+                    "emotional_journey": [],
+                    "confidence": 0.0,
+                    "reasoning_depth": "minimal",
+                    "reasoning_strategy": "crisis_skip",
+                }
+            }
+
         user_id = state.get("user_id", "")
         intent = state.get("intent", {})
         execution_plan = state.get("execution_plan", {})
@@ -108,14 +161,22 @@ class PodcastReasoningAgent(BaseAgent):
             knowledge_result=knowledge_result,
         )
 
-        # 4단계: 결과 조립
+        # 4단계: GoT 결과 저장 (Neo4j + Backend 전송)
+        got_result = reasoning.get("got_result")
+        if got_result:
+            session_id = state.get("session_id", "")
+            episode_id = f"ep_{session_id}" if session_id else ""
+            await self._save_graph_data(got_result, session_id, episode_id, state)
+
+        # 5단계: 결과 조립
         result: dict[str, Any] = {
             "reasoning_result": reasoning,
         }
 
         # 조건부 결과 포함 (독립 에이전트 호출 성공 시에만 AgentState에 기록)
         # - memory_results: Episode Memory 호출 결과 (complexity >= 0.6 또는 execution_plan 요청 시)
-        # - knowledge_results: Knowledge Agent 호출 결과 (complexity >= 0.5 또는 execution_plan 요청 시)
+        # - knowledge_results: Knowledge Agent 호출 결과
+        #   (complexity >= 0.5 또는 execution_plan 요청 시)
         if memory_result:
             result["memory_results"] = memory_result
         if knowledge_result:
@@ -126,13 +187,17 @@ class PodcastReasoningAgent(BaseAgent):
     # === 설정 로드 ===
 
     def _load_config(self) -> None:
-        """settings.yaml에서 추론 깊이 임계값을 로드한다. 실패 시 기본값 사용."""
-        try:
-            cfg = get_settings().get_agent_config("podcast_reasoning")
-        except Exception:
-            cfg = {}
-        self.full_threshold: float = cfg.get("full_threshold", 0.8)
-        self.standard_threshold: float = cfg.get("standard_threshold", 0.5)
+        """settings.yaml에서 추론 깊이 임계값 및 스타일 참고 임계값을 로드한다."""
+        cfg = self._load_agent_config(
+            {
+                "full_threshold": 0.8,
+                "standard_threshold": 0.5,
+                "memory_style_score_threshold": 0.9,
+            }
+        )
+        self.full_threshold: float = cfg["full_threshold"]
+        self.standard_threshold: float = cfg["standard_threshold"]
+        self.memory_style_score_threshold: float = cfg["memory_style_score_threshold"]
 
     # === 추론 깊이 결정 ===
 
@@ -189,11 +254,12 @@ class PodcastReasoningAgent(BaseAgent):
             tot_result = await self._tree_of_thoughts(
                 user_input, intent, got_result, memory_result, knowledge_result
             )
-            selected_id = tot_result.get("selected", "?")
+            # 프롬프트 출력 키와 정합: branches(대안 리스트), narrative_structure(선택된 구조)
+            selected_structure = tot_result.get("narrative_structure", "?")
             self.logger.info(
-                "ToT 완료 — 대안 %d개, 선택 #%s",
-                len(tot_result.get("alternatives", [])),
-                selected_id,
+                "ToT 완료 — 대안 %d개, 선택=%s",
+                len(tot_result.get("branches", [])),
+                selected_structure,
             )
 
         # CoT: 항상 실행
@@ -258,10 +324,14 @@ class PodcastReasoningAgent(BaseAgent):
             memory_result=memory_result,
             knowledge_result=knowledge_result,
         )
-        return await self.call_llm_json(
-            system_prompt=self.get_prompt("got"),
-            user_message=context,
-        )
+        try:
+            return await self.call_llm_json(
+                system_prompt=self.get_prompt("got"),
+                user_message=context,
+            )
+        except Exception as e:
+            self.logger.warning("[PodcastReasoning] GoT LLM 실패: %s", e)
+            return {}
 
     # === ToT (Tree of Thoughts) ===
 
@@ -286,10 +356,14 @@ class PodcastReasoningAgent(BaseAgent):
             memory_result=memory_result,
             knowledge_result=knowledge_result,
         )
-        return await self.call_llm_json(
-            system_prompt=self.get_prompt("tot"),
-            user_message=context,
-        )
+        try:
+            return await self.call_llm_json(
+                system_prompt=self.get_prompt("tot"),
+                user_message=context,
+            )
+        except Exception as e:
+            self.logger.warning("[PodcastReasoning] ToT LLM 실패: %s", e)
+            return {}
 
     # === CoT (Chain of Thoughts) ===
 
@@ -316,10 +390,14 @@ class PodcastReasoningAgent(BaseAgent):
             memory_result=memory_result,
             knowledge_result=knowledge_result,
         )
-        return await self.call_llm_json(
-            system_prompt=self.get_prompt("cot"),
-            user_message=context,
-        )
+        try:
+            return await self.call_llm_json(
+                system_prompt=self.get_prompt("cot"),
+                user_message=context,
+            )
+        except Exception as e:
+            self.logger.warning("[PodcastReasoning] CoT LLM 실패: %s", e)
+            return {}
 
     # === 컨텍스트 조합 헬퍼 ===
 
@@ -366,13 +444,98 @@ class PodcastReasoningAgent(BaseAgent):
             complexity = intent.get("complexity_score", 0.5)
             parts.append(f"[의도 분류]\n- 의도: {intent_info}\n- 복잡도: {complexity}")
 
-        # 독립 에이전트 결과 — DI 호출 결과 포함
+        # 독립 에이전트 결과 — phase별 역할 분리
+        # GoT: 오염방지 / ToT: 구조다양성 / CoT: 스타일개인화
         if memory_result and memory_result.get("episodes"):
-            episode_count = len(memory_result["episodes"])
-            parts.append(f"[과거 에피소드 기억]\n- {episode_count}건 발견")
+            episodes = memory_result["episodes"]
+            episode_count = len(episodes)
+
+            if phase == "GoT":
+                # GoT: 건수만 — 노드 오염 방지
+                parts.append(f"[과거 에피소드 기억]\n- {episode_count}건 발견")
+
+            elif phase == "ToT":
+                # ToT: 메타데이터만 — 구조 다양성 가이드
+                lines = ["[과거 에피소드 기억 — 구조 참고]"]
+                for ep in episodes:
+                    raw_date = ep.get("metadata", {}).get("date", "")
+                    date = raw_date[:10] if raw_date else "날짜 없음"
+                    title = ep.get("metadata", {}).get("episode_title", "제목 없음")
+                    lines.append(f"- {date} '{title}'")
+                lines.append(
+                    "→ 위 에피소드에서 사용된 구조를 파악하여 대안 생성 시 다양성을 확보하세요."
+                )
+                parts.append("\n".join(lines))
+
+            elif phase == "CoT":
+                # CoT: summary + score 필터 원문 — 스타일 개인화
+                lines = ["[과거 에피소드 스타일 참고]"]
+                summary = memory_result.get("summary", "")
+                if summary:
+                    lines.append(f"요약: {summary}")
+                for ep in episodes:
+                    score = ep.get("score", 0.0)
+                    if score < self.memory_style_score_threshold:
+                        continue
+                    raw_date = ep.get("metadata", {}).get("date", "")
+                    date = raw_date[:10] if raw_date else "날짜 없음"
+                    title = ep.get("metadata", {}).get("episode_title", "제목 없음")
+                    text_preview = ep.get("text", "")[:200]
+                    if text_preview:
+                        lines.append(
+                            f"\n[{date}] '{title}' (유사도 {score:.2f})\n{text_preview}..."
+                        )
+                # 실제 스타일 참고 내용이 있을 때만 섹션 추가
+                has_content = len(lines) > 1  # 헤더 이상의 내용이 있는지
+                if has_content:
+                    lines.append("→ 내용(주제·구조)이 아닌 스타일(말투·톤)만 참고하세요.")
+                    parts.append("\n".join(lines))
+
         if knowledge_result and knowledge_result.get("articles"):
-            article_count = len(knowledge_result["articles"])
-            parts.append(f"[관련 전문 지식]\n- {article_count}건 발견")
+            articles = knowledge_result["articles"]
+            article_count = len(articles)
+
+            if phase == "GoT":
+                # GoT: 건수만 — 그래프 노드 오염 방지 (memory와 동일 원칙)
+                parts.append(f"[관련 전문 지식]\n- {article_count}건 발견")
+
+            elif phase == "ToT":
+                # ToT: 제목 목록 — 구조 다양성 힌트 (상위 5건까지)
+                lines = ["[관련 전문 지식 — 제목 참고]"]
+                for a in articles[:5]:
+                    title = a.get("title") or "제목 없음"
+                    lines.append(f"- {title}")
+                lines.append(
+                    "→ 위 전문 자료에서 다루는 관점을 대안 생성 시 참고하되, "
+                    "구조 다양성을 유지하세요."
+                )
+                parts.append("\n".join(lines))
+
+            elif phase == "CoT":
+                # CoT: 근거 주입 — _synthesis 기사 우선, 없으면 상위 기사 요약 (상위 3건)
+                lines = ["[관련 전문 지식 — 근거]"]
+                synthesis_article = next(
+                    (a for a in articles if a.get("id") == "_synthesis"),
+                    None,
+                )
+                if synthesis_article:
+                    summary_text = str(synthesis_article.get("content", ""))[:500]
+                    if summary_text:
+                        lines.append(f"[종합 요약]\n{summary_text}")
+                else:
+                    for a in articles[:3]:
+                        title = a.get("title") or "제목 없음"
+                        content = str(a.get("content", ""))[:200]
+                        source = a.get("source") or "출처 불명"
+                        if content:
+                            lines.append(f"\n- [{title}] {content}... (출처: {source})")
+
+                # 헤더만 있고 실제 근거가 없으면 섹션 생략
+                if len(lines) > 1:
+                    lines.append(
+                        "→ 위 전문 자료에 기반하여 근거 있는 스크립트 핵심 메시지를 구성하세요."
+                    )
+                    parts.append("\n".join(lines))
 
         # 이전 phase 결과 — 누적 전달
         if got_result is not None:
@@ -388,12 +551,15 @@ class PodcastReasoningAgent(BaseAgent):
             )
 
         if tot_result is not None:
-            selected = tot_result.get("selected", "?")
+            # 프롬프트 출력 키와 정합: branches/narrative_structure/selection_rationale
+            selected_structure = tot_result.get("narrative_structure", "?")
+            target_duration = tot_result.get("target_duration", "")
             rationale = tot_result.get("selection_rationale", "")
-            alt_count = len(tot_result.get("alternatives", []))
+            alt_count = len(tot_result.get("branches", []))
+            duration_part = f", 목표 {target_duration}분" if target_duration else ""
             parts.append(
                 f"[ToT 구조 탐색 결과]\n"
-                f"- {alt_count}개 대안 중 #{selected} 선택\n"
+                f"- {alt_count}개 대안 중 '{selected_structure}' 선택{duration_part}\n"
                 f"- 선택 이유: {rationale}"
             )
 
@@ -414,15 +580,34 @@ class PodcastReasoningAgent(BaseAgent):
         호출 조건:
             1. execution_plan에서 needs_memory가 True이거나
             2. 복잡도가 0.6 이상인 경우
+
+        어댑터 패턴:
+            EpisodeMemoryAgent.process(state) → Stub 호환 형식 변환.
+            process() 반환: {"memory_results": {"items": [...], "summary": "..."}}
+            변환 결과:     {"episodes": [...], "relevance_scores": [...], "summary": "..."}
         """
         needs_memory = execution_plan.get("needs_memory", False)
 
         if needs_memory or complexity >= 0.6:
             self.logger.info("Episode Memory 조건부 호출 (complexity=%.2f)", complexity)
-            return await self.episode_memory.search(
-                query=user_input,
-                user_id=user_id,
-            )
+
+            memory_state: AgentState = {
+                "user_input": user_input,
+                "user_id": user_id,
+            }
+            result = await self.episode_memory.process(memory_state)
+            memory_data = result.get("memory_results")
+
+            if not memory_data:
+                return None
+
+            # process() → Stub 호환 형식으로 변환
+            items = memory_data.get("items", [])
+            return {
+                "episodes": items,
+                "relevance_scores": [item.get("score", 0.0) for item in items],
+                "summary": memory_data.get("summary", ""),
+            }
 
         return None
 
@@ -443,18 +628,113 @@ class PodcastReasoningAgent(BaseAgent):
 
         if needs_knowledge or complexity >= 0.5:
             self.logger.info("Knowledge Agent 조건부 호출 (complexity=%.2f)", complexity)
-            return await self.knowledge_agent.search(
+            result = await self.knowledge_agent.search(
                 query=user_input,
                 domain="mental_health",
             )
+            return cast("dict[str, Any]", result)
 
         return None
 
+    # === GoT 그래프 데이터 저장 ===
 
-# LangGraph 노드 함수로 사용할 에이전트 인스턴스
-podcast_reasoning_agent = PodcastReasoningAgent()
+    async def _save_graph_data(
+        self,
+        got_result: dict[str, Any],
+        session_id: str,
+        episode_id: str,
+        state: AgentState,
+    ) -> None:
+        """GoT 결과를 Neo4j에 저장하고 Backend에 전송 + RDB 누적 그래프 갱신한다.
+
+        세 작업 모두 실패해도 파이프라인은 계속 진행한다.
+        """
+        user_id = state.get("user_id", "")
+        await self._save_got_to_neo4j(got_result, session_id, episode_id, user_id)
+
+        # RDB 누적 그래프 — label+group 기준 통합 UPSERT
+        from src.api.graph_cumulative import publish_graph_to_rdb
+
+        await publish_graph_to_rdb(got_result, cast(dict[str, Any], state), episode_id)
+
+    async def _save_got_to_neo4j(
+        self,
+        got_result: dict[str, Any],
+        session_id: str,
+        episode_id: str,
+        user_id: str = "",
+    ) -> None:
+        """GoT 노드/엣지를 Neo4j에 저장한다.
+
+        실패해도 파이프라인은 계속 진행한다 (graceful degradation).
+
+        [이관 주석] Neo4j를 Backend로 이관 시:
+        - 이 메서드 전체를 삭제한다.
+        - _save_graph_data()에서 이 호출도 제거한다.
+        - Backend 전송(_publish_graph_to_backend)만 유지한다.
+        """
+        if not episode_id:
+            return
+        try:
+            from src.db.factory import create_graph_client
+
+            async with create_graph_client() as client:
+                for node in got_result.get("nodes", []):
+                    await client.execute_query(
+                        "MERGE (g:GoTNode {got_node_id: $id}) "
+                        "SET g.node_type = $type, g.label = $label, "
+                        "g.weight = $intensity, g.episode_id = $episode_id, "
+                        "g.group = $group",
+                        params={
+                            "id": f"{episode_id}_{node.get('id', '')}",
+                            "type": node.get("type", "concept"),
+                            "label": node.get("label", ""),
+                            "intensity": node.get("intensity", 0.5),
+                            "episode_id": episode_id,
+                            "group": node.get("group", "emotional_exhaustion"),
+                        },
+                    )
+                for edge in got_result.get("edges", []):
+                    await client.execute_query(
+                        "MATCH (a:GoTNode {got_node_id: $from_id}), "
+                        "(b:GoTNode {got_node_id: $to_id}) "
+                        "MERGE (a)-[:LEADS_TO {relationship: $rel}]->(b)",
+                        params={
+                            "from_id": f"{episode_id}_{edge.get('from', '')}",
+                            "to_id": f"{episode_id}_{edge.get('to', '')}",
+                            "rel": edge.get("relationship", "related"),
+                        },
+                    )
+                # User → Session → GoTNode 관계
+                if session_id:
+                    # User, Session 노드 생성 및 HAS_SESSION 관계
+                    if user_id:
+                        await client.execute_query(
+                            "MERGE (u:User {user_id: $uid}) "
+                            "MERGE (s:Session {session_id: $sid}) "
+                            "MERGE (u)-[:HAS_SESSION]->(s)",
+                            params={"uid": user_id, "sid": session_id},
+                        )
+                    else:
+                        await client.execute_query(
+                            "MERGE (s:Session {session_id: $sid})",
+                            params={"sid": session_id},
+                        )
+                    # Session → GoTNode 관계
+                    await client.execute_query(
+                        "MATCH (s:Session {session_id: $sid}), (g:GoTNode) "
+                        "WHERE g.episode_id = $eid "
+                        "MERGE (s)-[:REASONED_BY]->(g)",
+                        params={"sid": session_id, "eid": episode_id},
+                    )
+        except Exception as e:
+            self.logger.warning("Neo4j 저장 실패 (파이프라인 계속): %s", e)
 
 
 async def podcast_reasoning_node(state: AgentState) -> dict[str, Any]:
-    """LangGraph 노드 — Podcast Reasoning."""
-    return await podcast_reasoning_agent(state)
+    """LangGraph 노드 — Podcast Reasoning.
+    요청마다 새 인스턴스를 생성하여 동시 요청 간 상태를 격리한다.
+    DI 미전달 시 __init__ 내부에서 실제 KnowledgeAgent/EpisodeMemoryAgent로 fallback 한다.
+    """
+    agent = PodcastReasoningAgent()
+    return await agent(state)

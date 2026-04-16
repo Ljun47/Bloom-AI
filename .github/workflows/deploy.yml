@@ -1,0 +1,179 @@
+name: AI Server Auto Deploy (SSM)
+
+on:
+  workflow_run:
+    workflows: ["CI"]   # ci.yml의 name: 필드와 정확히 일치
+    branches: [main]
+    types: [completed]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  REGISTRY: ghcr.io
+  # Converts repository to lowercase for GHCR compatibility
+  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME_LOWER: ""
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    # CI 워크플로우가 main 브랜치의 push 이벤트에서 성공으로 완료된 경우에만 실행
+    # event == 'push' 조건: PR CI 성공 시 불필요한 배포 방지
+    # ⚠️ if 조건은 단일 라인 필수 — | 블록 스칼라 사용 시 문자열로 처리되어 평가 안됨
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set lower case repository name
+        run: echo "IMAGE_NAME_LOWER=${IMAGE_NAME,,}" >> $GITHUB_ENV
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Extract metadata (tags, labels) for AI Server
+        id: meta-ai
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}-ai-server
+          tags: |
+            type=raw,value=sha-${{ github.event.workflow_run.head_sha }}
+            type=raw,value=latest
+
+      - name: Build and push AI Server Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta-ai.outputs.tags }}
+          labels: ${{ steps.meta-ai.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}-ai-server:buildcache
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}-ai-server:buildcache,mode=max
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Set lower case repository name
+        run: echo "IMAGE_NAME_LOWER=${IMAGE_NAME,,}" >> $GITHUB_ENV
+
+      - name: Deploy via AWS SSM
+        run: |
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids "${{ secrets.AWS_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --timeout-seconds 600 \
+            --parameters 'commands=[
+              "mkdir -p /home/ubuntu/app",
+              "sudo chown -R ubuntu:ubuntu /home/ubuntu/app",
+              "cd /home/ubuntu/app",
+              "if [ ! -d .git ]; then git clone -b main ${{ github.server_url }}/${{ github.repository }}.git . ; fi",
+              "git config --system --add safe.directory /home/ubuntu/app",
+              "git fetch origin main",
+              "git reset --hard origin/main",
+              "printf '"'"'%s\\n'"'"' '"'"'LANGCHAIN_TRACING_V2=${{ secrets.LANGCHAIN_TRACING_V2 }}'"'"' > .env",
+              "printf '"'"'%s\\n'"'"' '"'"'LANGCHAIN_API_KEY=${{ secrets.LANGCHAIN_API_KEY }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'LANGCHAIN_PROJECT=${{ secrets.LANGCHAIN_PROJECT }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'AWS_S3_BUCKET=${{ secrets.AWS_S3_BUCKET }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'APP_ENV=${{ secrets.APP_ENV }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'LLM_PROVIDER=${{ secrets.LLM_PROVIDER }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'AWS_REGION=${{ secrets.AWS_REGION }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'LOG_LEVEL=${{ secrets.LOG_LEVEL }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'LOG_FORMAT=${{ secrets.LOG_FORMAT }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'BACKEND_API_URL=${{ secrets.BACKEND_API_URL }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'STORAGE_MODE=${{ secrets.STORAGE_MODE }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'NEO4J_PASSWORD=${{ secrets.NEO4J_PASSWORD }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'NEO4J_USER=${{ secrets.NEO4J_USER }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'NEO4J_URL=bolt://neo4j:7687'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'KT_CLOUD_QUERY_ENDPOINT=${{ secrets.KT_CLOUD_QUERY_ENDPOINT }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'KT_CLOUD_QUERY_TOKEN=${{ secrets.KT_CLOUD_QUERY_TOKEN }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'KT_CLOUD_PASSAGE_ENDPOINT=${{ secrets.KT_CLOUD_PASSAGE_ENDPOINT }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'KT_CLOUD_PASSAGE_TOKEN=${{ secrets.KT_CLOUD_PASSAGE_TOKEN }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'KT_CLOUD_TEXTGEN_ENDPOINT=${{ secrets.KT_CLOUD_TEXTGEN_ENDPOINT }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'KT_CLOUD_TEXTGEN_TOKEN=${{ secrets.KT_CLOUD_TEXTGEN_TOKEN }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'KT_CLOUD_KNOWLEDGE_PARSE_ENDPOINT=${{ secrets.KT_CLOUD_KNOWLEDGE_PARSE_ENDPOINT }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'KT_CLOUD_KNOWLEDGE_PARSE_TOKEN=${{ secrets.KT_CLOUD_KNOWLEDGE_PARSE_TOKEN }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'KT_CLOUD_KNOWLEDGE_EMBEDDING_QUERY_ENDPOINT=${{ secrets.KT_CLOUD_KNOWLEDGE_EMBEDDING_QUERY_ENDPOINT }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'KT_CLOUD_KNOWLEDGE_EMBEDDING_QUERY_TOKEN=${{ secrets.KT_CLOUD_KNOWLEDGE_EMBEDDING_QUERY_TOKEN }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'KT_CLOUD_KNOWLEDGE_EMBEDDING_PASSAGE_ENDPOINT=${{ secrets.KT_CLOUD_KNOWLEDGE_EMBEDDING_PASSAGE_ENDPOINT }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'KT_CLOUD_KNOWLEDGE_EMBEDDING_PASSAGE_TOKEN=${{ secrets.KT_CLOUD_KNOWLEDGE_EMBEDDING_PASSAGE_TOKEN }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'KT_CLOUD_KNOWLEDGE_TEXTGEN_ENDPOINT=${{ secrets.KT_CLOUD_KNOWLEDGE_TEXTGEN_ENDPOINT }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'KT_CLOUD_KNOWLEDGE_TEXTGEN_TOKEN=${{ secrets.KT_CLOUD_KNOWLEDGE_TEXTGEN_TOKEN }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'PINECONE_INDEX_EPISODE=${{ secrets.PINECONE_INDEX_EPISODE }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'PINECONE_INDEX_KNOWLEDGE=${{ secrets.PINECONE_INDEX_KNOWLEDGE }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'PINECONE_API_KEY=${{ secrets.PINECONE_API_KEY }}'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'PROMPT_DIR=/app/prompts'"'"' >> .env",
+              "printf '"'"'%s\\n'"'"' '"'"'AI_SERVER_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LOWER }}-ai-server:sha-${{ github.event.workflow_run.head_sha }}'"'"' >> .env",
+              "chmod 600 /home/ubuntu/app/.env",
+              "echo ${{ secrets.GHCR_TOKEN }} | sudo docker login ghcr.io -u ${{ github.actor }} --password-stdin",
+              "PREV_IMAGE=$(sudo docker inspect $(sudo docker compose ps -q ai-server 2>/dev/null) --format=\"{{.Image}}\" 2>/dev/null || echo ); echo \"$PREV_IMAGE\" > /home/ubuntu/app/.prev_image",
+              "sudo docker compose pull ai-server",
+              "sudo docker compose stop --timeout 30 ai-server 2>/dev/null || true",
+              "sudo docker compose up -d --no-deps ai-server",
+              "for i in $(seq 1 12); do CNAME=$(sudo docker compose ps -q ai-server 2>/dev/null); STATUS=$(sudo docker inspect --format=\"{{.State.Health.Status}}\" \"$CNAME\" 2>/dev/null || echo unknown); if [ \"$STATUS\" = \"healthy\" ]; then echo \"Container healthy at attempt $i\"; break; fi; if [ \"$STATUS\" = \"unhealthy\" ]; then echo Container unhealthy - printing logs; sudo docker logs --tail 50 \"$CNAME\" 2>&1; exit 1; fi; echo \"Waiting... attempt $i/12 (status: $STATUS)\"; sleep 10; if [ $i -eq 12 ]; then echo \"Healthcheck timeout after 120s - final status: $STATUS\"; sudo docker logs --tail 50 \"$CNAME\" 2>&1; exit 1; fi; done",
+              "sudo docker image prune -f --filter \"until=24h\""
+            ]' \
+            --region ${{ secrets.AWS_REGION }} \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "SSM Command ID: $CMD_ID"
+
+          if [ -z "$CMD_ID" ]; then
+            echo "ERROR: SSM send-command failed (empty command ID)"
+            exit 1
+          fi
+
+          # aws ssm wait command-executed 기본 타임아웃은 100초로
+          # SSM timeout-seconds(600초)보다 짧아 false failure 가능.
+          # 15초 간격 × 40회 = 600초 폴링으로 교체한다.
+          DEPLOY_STATUS=""
+          for i in $(seq 1 40); do
+            DEPLOY_STATUS=$(aws ssm get-command-invocation \
+              --command-id "$CMD_ID" \
+              --instance-id "${{ secrets.AWS_INSTANCE_ID }}" \
+              --region ${{ secrets.AWS_REGION }} \
+              --query "Status" \
+              --output text 2>/dev/null || echo "InProgress")
+            echo "Deploy status ($i/40): $DEPLOY_STATUS"
+            if [ "$DEPLOY_STATUS" = "Success" ]; then
+              echo "Deployment succeeded"
+              exit 0
+            elif [ "$DEPLOY_STATUS" = "Failed" ] || [ "$DEPLOY_STATUS" = "TimedOut" ] || [ "$DEPLOY_STATUS" = "Cancelled" ]; then
+              echo "Deployment failed with status: $DEPLOY_STATUS"
+              aws ssm get-command-invocation \
+                --command-id "$CMD_ID" \
+                --instance-id "${{ secrets.AWS_INSTANCE_ID }}" \
+                --region ${{ secrets.AWS_REGION }} \
+                --query "StandardErrorContent" \
+                --output text
+              exit 1
+            fi
+            sleep 15
+          done
+          echo "ERROR: Deploy polling timed out after 600s (final status: $DEPLOY_STATUS)"
+          exit 1

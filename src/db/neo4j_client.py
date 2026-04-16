@@ -14,15 +14,15 @@ external_schemas.py의 Neo4j 노드/관계 스키마와 연동한다.
 
 from __future__ import annotations
 
-import logging
 import os
 from typing import Any
 
 from neo4j import AsyncGraphDatabase
 
 from src.db.base import BaseGraphClient
+from src.utils.logger import get_agent_logger
 
-logger = logging.getLogger(__name__)
+logger = get_agent_logger("db.neo4j_client")
 
 
 class Neo4jClient(BaseGraphClient):
@@ -40,9 +40,11 @@ class Neo4jClient(BaseGraphClient):
         user: str | None = None,
         password: str | None = None,
     ) -> None:
-        self._url = url or os.getenv("NEO4J_URL", "bolt://localhost:7687")
-        self._user = user or os.getenv("NEO4J_USER", "neo4j")
-        self._password = password or os.getenv("NEO4J_PASSWORD", "")
+        self._url = url if url is not None else os.getenv("NEO4J_URL", "bolt://localhost:7687")
+        self._user = user if user is not None else os.getenv("NEO4J_USER", "neo4j")
+        self._password = password if password is not None else os.getenv("NEO4J_PASSWORD", "")
+        assert isinstance(self._url, str)
+        assert isinstance(self._user, str) and isinstance(self._password, str)
         self._driver = AsyncGraphDatabase.driver(
             self._url,
             auth=(self._user, self._password),
@@ -57,7 +59,7 @@ class Neo4jClient(BaseGraphClient):
         async with self._driver.session() as session:
             result = await session.run(query, parameters=params or {})
             records = await result.data()
-            return records
+            return records  # type: ignore[no-any-return]
 
     async def close(self) -> None:
         """드라이버 연결을 정리한다."""

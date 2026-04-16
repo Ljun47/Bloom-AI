@@ -12,10 +12,9 @@ Mind-Log 프로젝트에 기여하기 위한 가이드입니다.
 
 | 개발자 | 담당 파일 경로 |
 |--------|---------------|
-| 개발자1 | `src/agents/conversation/{intent_classifier,knowledge,synthesis,personalization}.py`, `src/agents/podcast/{script_generator,script_personalizer}.py` |
-| 개발자2 | `src/agents/conversation/{safety,memory,visualization,emotion}.py`, `src/agents/podcast/{episode_memory,visualization}.py` |
-| 개발자3 | `src/agents/conversation/{reasoning,context,validator,learning}.py`, `src/agents/podcast/{podcast_reasoning,content_analyzer,batch_validator}.py` |
-| 미정 | `src/agents/conversation/telemetry.py` (전체 에이전트 완료 후 예정) |
+| 개발자1 | `src/agents/podcast/{intent_classifier,knowledge,script_generator,script_personalizer}.py` |
+| 개발자2 | `src/agents/podcast/{safety,emotion,visualization,episode_memory}.py` |
+| 개발자3 | `src/agents/podcast/{podcast_reasoning,content_analyzer,batch_validator,learning}.py` |
 
 ### Protected Files
 
@@ -83,14 +82,14 @@ async def {name}_node(state: AgentState) -> dict[str, Any]:
 
 타입: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`
 
-상세 스코프 목록은 `docs/guides/GIT_WORKFLOW.md`를 참조하세요.
+상세 스코프 목록은 이 문서의 하단 및 `CLAUDE.md`를 참조하세요.
 
 ---
 
 ## 테스트 요구사항
 
 - 모든 에이전트는 단위 테스트 필수
-- 테스트 파일 위치: `tests/agents/{conversation,podcast}/test_{agent_name}.py`
+- 테스트 파일 위치: `tests/agents/podcast/test_{agent_name}.py`
 - PR 제출 전 `pytest tests/ -v` 통과 확인
 
 ---
@@ -117,4 +116,4 @@ git push origin feature/your-feature
 
 ---
 
-*상세 브랜치 전략은 docs/guides/GIT_WORKFLOW.md, 아키텍처 규칙은 CLAUDE.md를 참조하세요.*
+*상세 브랜치 전략은 이 문서, 아키텍처 규칙은 CLAUDE.md를 참조하세요.*

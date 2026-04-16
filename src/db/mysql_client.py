@@ -17,7 +17,6 @@ PyMySQL + asyncio.to_thread() 래핑 패턴 (llm_client.py와 동일).
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 from typing import Any
 from urllib.parse import urlparse
@@ -26,8 +25,9 @@ import pymysql
 import pymysql.cursors
 
 from src.db.base import BaseRDBClient
+from src.utils.logger import get_agent_logger
 
-logger = logging.getLogger(__name__)
+logger = get_agent_logger("db.mysql_client")
 
 
 def _parse_mysql_url(url: str) -> dict[str, Any]:
@@ -52,9 +52,8 @@ class MySQLClient(BaseRDBClient):
     """
 
     def __init__(self, url: str | None = None) -> None:
-        self._url = url or os.getenv(
-            "MYSQL_URL", "mysql+pymysql://root:@localhost:3306/mindlog"
-        )
+        self._url = url if url is not None else os.getenv("MYSQL_URL", "")
+        assert isinstance(self._url, str)
         self._conn_params = _parse_mysql_url(self._url)
         self._connection: pymysql.Connection | None = None
 
@@ -77,7 +76,7 @@ class MySQLClient(BaseRDBClient):
         with conn.cursor() as cursor:
             affected = cursor.execute(query, params)
             conn.commit()
-            return affected
+            return int(affected)
 
     async def fetch(
         self,

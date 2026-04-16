@@ -15,12 +15,13 @@ NOTE: tests/agents/podcast/conftest.py의 got_default_thresholds autouse fixture
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.agents.podcast.episode_memory import EpisodeMemoryAgent
+from src.agents.podcast.knowledge import KnowledgeAgent
 from src.agents.podcast.podcast_reasoning import PodcastReasoningAgent
-from src.agents.shared.stubs import EpisodeMemoryStub, KnowledgeAgentStub
 from src.models.agent_state import AgentState
 
 # === 공용 픽스처 ===
@@ -28,11 +29,13 @@ from src.models.agent_state import AgentState
 
 @pytest.fixture
 def mock_memory() -> AsyncMock:
-    """모의 Episode Memory 에이전트."""
-    mock = AsyncMock(spec=EpisodeMemoryStub)
-    mock.search.return_value = {
-        "episodes": [{"id": "ep_001", "title": "이전 에피소드"}],
-        "relevance_scores": [0.85],
+    """모의 Episode Memory 에이전트 — process() 어댑터 호환."""
+    mock = AsyncMock()
+    mock.process.return_value = {
+        "memory_results": {
+            "items": [{"id": "ep_001", "title": "이전 에피소드", "score": 0.85}],
+            "summary": "이전 에피소드 요약",
+        }
     }
     return mock
 
@@ -40,7 +43,7 @@ def mock_memory() -> AsyncMock:
 @pytest.fixture
 def mock_knowledge() -> AsyncMock:
     """모의 Knowledge Agent."""
-    mock = AsyncMock(spec=KnowledgeAgentStub)
+    mock = AsyncMock(spec=KnowledgeAgent)
     mock.search.return_value = {
         "articles": [{"id": "art_001", "title": "스트레스 관리 가이드"}],
         "guidelines": ["충분한 수면", "규칙적인 운동"],
@@ -59,7 +62,12 @@ def agent(mock_memory: AsyncMock, mock_knowledge: AsyncMock) -> PodcastReasoning
 
 @pytest.fixture
 def agent_with_stubs() -> PodcastReasoningAgent:
-    """Stub을 사용하는 기본 Podcast Reasoning 인스턴스."""
+    """기본 Podcast Reasoning 인스턴스.
+
+    DI fallback으로 실제 EpisodeMemoryAgent/KnowledgeAgent가 주입된다.
+    내부 헬퍼 메서드(_determine_reasoning_depth, _build_phase_context 등) 테스트 전용.
+    외부 호출이 없는 순수 로직 검증이므로 실제 에이전트 fallback이어도 안전하다.
+    """
     return PodcastReasoningAgent()
 
 
@@ -99,57 +107,27 @@ def mock_got_result() -> dict[str, Any]:
 
 @pytest.fixture
 def mock_tot_result() -> dict[str, Any]:
-    """ToT 대안 평가 모의 결과."""
+    """ToT 대안 평가 모의 결과 — prompts/podcast/podcast_reasoning.yaml의 실제 출력 스키마와 정합.
+
+    실제 프롬프트는 branches/narrative_structure/target_duration/selection_rationale를 출력한다.
+    """
     return {
-        "alternatives": [
+        "branches": [
             {
-                "id": 1,
-                "structure_summary": "원인 탐색 → 극복 사례 → 실천법",
-                "segments": [
-                    {
-                        "segment": "intro", "title": "오프닝",
-                        "duration_seconds": 20, "focus": "공감",
-                    },
-                    {
-                        "segment": "body_1", "title": "원인 탐색",
-                        "duration_seconds": 80, "focus": "분석",
-                    },
-                    {
-                        "segment": "body_2", "title": "극복 사례",
-                        "duration_seconds": 80, "focus": "사례",
-                    },
-                    {
-                        "segment": "outro", "title": "마무리",
-                        "duration_seconds": 20, "focus": "격려",
-                    },
-                ],
-                "strengths": ["체계적 구조", "실용적"],
-                "weaknesses": ["감정 탐색 부족"],
-                "score": 0.85,
+                "structure": "discovery",
+                "pros": ["체계적 구조", "실용적"],
+                "cons": ["감정 탐색 부족"],
+                "predicted_impact": "원인 탐색 → 극복 사례 → 실천법 흐름으로 인지적 만족도 제공",
             },
             {
-                "id": 2,
-                "structure_summary": "감정 인정 → 공감 대화 → 작은 실천",
-                "segments": [
-                    {
-                        "segment": "intro", "title": "감정 인정",
-                        "duration_seconds": 30, "focus": "공감",
-                    },
-                    {
-                        "segment": "body_1", "title": "공감 대화",
-                        "duration_seconds": 120, "focus": "대화",
-                    },
-                    {
-                        "segment": "outro", "title": "작은 실천",
-                        "duration_seconds": 30, "focus": "실천",
-                    },
-                ],
-                "strengths": ["높은 공감력", "따뜻한 톤"],
-                "weaknesses": ["구조 단순"],
-                "score": 0.75,
+                "structure": "conversation",
+                "pros": ["높은 공감력", "따뜻한 톤"],
+                "cons": ["구조 단순"],
+                "predicted_impact": "감정 인정 → 공감 대화 → 작은 실천으로 정서적 위로 제공",
             },
         ],
-        "selected": 1,
+        "narrative_structure": "discovery",
+        "target_duration": 5,
         "selection_rationale": "체계적이면서 실용적인 구조가 3-5분 에피소드에 적합",
     }
 
@@ -159,12 +137,27 @@ def mock_cot_result() -> dict[str, Any]:
     """CoT 상세화 모의 결과 (3-5분 범위, 210초)."""
     return {
         "episode_structure": [
-            {"segment": "intro", "title": "오늘의 이야기", "duration_seconds": 30,
-             "content_summary": "에피소드 소개", "tone": "warm"},
-            {"segment": "body_1", "title": "스트레스의 본질", "duration_seconds": 150,
-             "content_summary": "스트레스 원인 탐색", "tone": "informative"},
-            {"segment": "outro", "title": "마무리", "duration_seconds": 30,
-             "content_summary": "격려와 마무리", "tone": "encouraging"},
+            {
+                "segment": "intro",
+                "title": "오늘의 이야기",
+                "duration_seconds": 30,
+                "content_summary": "에피소드 소개",
+                "tone": "warm",
+            },
+            {
+                "segment": "body_1",
+                "title": "스트레스의 본질",
+                "duration_seconds": 150,
+                "content_summary": "스트레스 원인 탐색",
+                "tone": "informative",
+            },
+            {
+                "segment": "outro",
+                "title": "마무리",
+                "duration_seconds": 30,
+                "content_summary": "격려와 마무리",
+                "tone": "encouraging",
+            },
         ],
         "narrative_flow": "공감 → 탐색 → 실천 → 격려",
         "key_points": ["스트레스 인식", "대처 전략", "자기돌봄"],
@@ -205,58 +198,48 @@ def test_reasoning_depth_routing(
     assert agent_with_stubs._determine_reasoning_depth(complexity) == expected_depth
 
 
-# === 2. full 파이프라인 (GoT+ToT+CoT = 3회 호출) ===
+# === 2. full/minimal 파이프라인 LLM 호출 수 ===
 
 
 @pytest.mark.asyncio
-async def test_full_pipeline_calls_llm_3_times(
+async def test_pipeline_llm_call_count(
     agent: PodcastReasoningAgent,
     base_state: AgentState,
     mock_got_result: dict[str, Any],
     mock_tot_result: dict[str, Any],
     mock_cot_result: dict[str, Any],
 ) -> None:
-    """full depth일 때 GoT+ToT+CoT = LLM 3회 호출 확인."""
-    mock = AsyncMock(side_effect=[mock_got_result, mock_tot_result, mock_cot_result])
-    with patch.object(agent, "call_llm_json", mock):
-        result = await agent.process(base_state)
+    """full(3회) + minimal(1회) 파이프라인 LLM 호출 수 확인."""
+    # full depth (complexity=0.9, base_state)
+    mock_full = AsyncMock(side_effect=[mock_got_result, mock_tot_result, mock_cot_result])
+    with patch.object(agent, "call_llm_json", mock_full):
+        result_full = await agent.process(base_state)
 
-    assert mock.call_count == 3
-    reasoning = result["reasoning_result"]
-    assert reasoning["reasoning_depth"] == "full"
-    assert reasoning["reasoning_strategy"] == "GoT+ToT+CoT"
-    assert "got_result" in reasoning
-    assert "tot_result" in reasoning
+    assert mock_full.call_count == 3
+    assert result_full["reasoning_result"]["reasoning_depth"] == "full"
+    assert result_full["reasoning_result"]["reasoning_strategy"] == "GoT+ToT+CoT"
+    assert "got_result" in result_full["reasoning_result"]
+    assert "tot_result" in result_full["reasoning_result"]
 
-
-# === 3. minimal 파이프라인 (CoT = 1회 호출) ===
-
-
-@pytest.mark.asyncio
-async def test_minimal_pipeline_calls_llm_1_time(
-    agent: PodcastReasoningAgent,
-    mock_cot_result: dict[str, Any],
-) -> None:
-    """minimal depth일 때 CoT만 = LLM 1회 호출 확인."""
+    # minimal depth (complexity=0.3)
     agent.full_threshold = 0.8
     agent.standard_threshold = 0.5
-    state = AgentState(
+    state_min = AgentState(
         user_input="오늘 하루 어떻게 보냈는지 이야기해볼게요.",
         user_id="test_user_001",
         session_id="sess_test_001",
         mode="podcast",
         intent={"primary_intent": "daily_reflection", "complexity_score": 0.3},
     )
-    mock = AsyncMock(return_value=mock_cot_result)
-    with patch.object(agent, "call_llm_json", mock):
-        result = await agent.process(state)
+    mock_min = AsyncMock(return_value=mock_cot_result)
+    with patch.object(agent, "call_llm_json", mock_min):
+        result_min = await agent.process(state_min)
 
-    assert mock.call_count == 1
-    reasoning = result["reasoning_result"]
-    assert reasoning["reasoning_depth"] == "minimal"
-    assert reasoning["reasoning_strategy"] == "CoT"
-    assert "got_result" not in reasoning
-    assert "tot_result" not in reasoning
+    assert mock_min.call_count == 1
+    assert result_min["reasoning_result"]["reasoning_depth"] == "minimal"
+    assert result_min["reasoning_result"]["reasoning_strategy"] == "CoT"
+    assert "got_result" not in result_min["reasoning_result"]
+    assert "tot_result" not in result_min["reasoning_result"]
 
 
 # === 4. DI 호출 라우팅 ===
@@ -297,17 +280,17 @@ async def test_di_call_routing(
         intent={"primary_intent": "test", "complexity_score": complexity},
     )
     side_effect = (
-        [mock_got_result, mock_tot_result, mock_cot_result] if complexity >= 0.8
-        else [mock_tot_result, mock_cot_result] if complexity >= 0.5
-        else [mock_cot_result]
+        [mock_got_result, mock_tot_result, mock_cot_result]
+        if complexity >= 0.8
+        else [mock_tot_result, mock_cot_result] if complexity >= 0.5 else [mock_cot_result]
     )
     with patch.object(agent, "call_llm_json", AsyncMock(side_effect=side_effect)):
         await agent.process(state)
 
     if expect_memory:
-        mock_memory.search.assert_called_once()
+        mock_memory.process.assert_called_once()
     else:
-        mock_memory.search.assert_not_called()
+        mock_memory.process.assert_not_called()
     if expect_knowledge:
         mock_knowledge.search.assert_called_once()
     else:
@@ -348,30 +331,32 @@ async def test_execution_plan_forces_di_call(
     with patch.object(agent, "call_llm_json", AsyncMock(return_value=mock_cot_result)):
         await agent.process(state)
 
-    target = mock_memory if check_mock == "mock_memory" else mock_knowledge
-    target.search.assert_called_once()
+    if check_mock == "mock_memory":
+        mock_memory.process.assert_called_once()
+    else:
+        mock_knowledge.search.assert_called_once()
 
 
 # === 6. DI 주입 패턴 ===
 
 
 @pytest.mark.parametrize(
-    "use_stubs",
+    "use_default",
     [
-        pytest.param(True, id="default_stubs"),
+        pytest.param(True, id="default_fallback"),
         pytest.param(False, id="custom_agents"),
     ],
 )
 def test_di_injection(
     mock_memory: AsyncMock,
     mock_knowledge: AsyncMock,
-    use_stubs: bool,
+    use_default: bool,
 ) -> None:
-    """DI 인자 없이 생성하면 stub, 있으면 커스텀 에이전트가 주입된다."""
-    if use_stubs:
+    """DI 인자 없이 생성하면 실제 에이전트로 fallback, 있으면 커스텀 에이전트가 주입된다."""
+    if use_default:
         agent = PodcastReasoningAgent()
-        assert isinstance(agent.episode_memory, EpisodeMemoryStub)
-        assert isinstance(agent.knowledge_agent, KnowledgeAgentStub)
+        assert isinstance(agent.episode_memory, EpisodeMemoryAgent)
+        assert isinstance(agent.knowledge_agent, KnowledgeAgent)
     else:
         agent = PodcastReasoningAgent(
             episode_memory=mock_memory,
@@ -381,75 +366,53 @@ def test_di_injection(
         assert agent.knowledge_agent is mock_knowledge
 
 
-# === 7. GoT 단위 테스트 ===
+# === 7. GoT/ToT/CoT 단위 테스트 ===
 
 
 @pytest.mark.asyncio
-async def test_got_structure_and_context(
+async def test_got_tot_cot_structure_and_context(
     agent: PodcastReasoningAgent,
     mock_got_result: dict[str, Any],
+    mock_tot_result: dict[str, Any],
+    mock_cot_result: dict[str, Any],
 ) -> None:
-    """GoT 결과에 필수 필드가 있고, user_input/intent가 프롬프트에 포함된다."""
-    mock = AsyncMock(return_value=mock_got_result)
-    with patch.object(agent, "call_llm_json", mock):
-        result = await agent._graph_of_thoughts(
+    """GoT/ToT/CoT 각각의 필수 필드 + 프롬프트 컨텍스트 포함을 검증한다."""
+
+    def _get_user_message(m: AsyncMock) -> str:
+        return m.call_args.kwargs.get(
+            "user_message", m.call_args.args[1] if len(m.call_args.args) > 1 else ""
+        )
+
+    # GoT
+    mock_g = AsyncMock(return_value=mock_got_result)
+    with patch.object(agent, "call_llm_json", mock_g):
+        got = await agent._graph_of_thoughts(
             user_input="스트레스 관리",
             intent={"primary_intent": "coping", "complexity_score": 0.9},
             memory_result=None,
             knowledge_result=None,
         )
+    assert "core_pattern" in got and "nodes" in got and "edges" in got
+    assert "스트레스 관리" in _get_user_message(mock_g)
+    assert "coping" in _get_user_message(mock_g)
 
-    assert "core_pattern" in result
-    assert "nodes" in result
-    assert "edges" in result
-    user_message = mock.call_args.kwargs.get(
-        "user_message", mock.call_args.args[1] if len(mock.call_args.args) > 1 else ""
-    )
-    assert "스트레스 관리" in user_message
-    assert "coping" in user_message
-
-
-# === 8. ToT 단위 테스트 ===
-
-
-@pytest.mark.asyncio
-async def test_tot_structure_and_context(
-    agent: PodcastReasoningAgent,
-    mock_got_result: dict[str, Any],
-    mock_tot_result: dict[str, Any],
-) -> None:
-    """ToT 결과에 필수 필드가 있고, GoT 결과가 프롬프트에 포함된다."""
-    mock = AsyncMock(return_value=mock_tot_result)
-    with patch.object(agent, "call_llm_json", mock):
-        result = await agent._tree_of_thoughts(
+    # ToT
+    mock_t = AsyncMock(return_value=mock_tot_result)
+    with patch.object(agent, "call_llm_json", mock_t):
+        tot = await agent._tree_of_thoughts(
             user_input="스트레스 관리",
             intent={"primary_intent": "coping"},
             got_result=mock_got_result,
             memory_result=None,
             knowledge_result=None,
         )
+    assert "branches" in tot and "narrative_structure" in tot
+    assert "GoT 그래프 분석 결과" in _get_user_message(mock_t)
 
-    assert "alternatives" in result
-    assert "selected" in result
-    user_message = mock.call_args.kwargs.get(
-        "user_message", mock.call_args.args[1] if len(mock.call_args.args) > 1 else ""
-    )
-    assert "GoT 그래프 분석 결과" in user_message
-
-
-# === 9. CoT 단위 테스트 ===
-
-
-@pytest.mark.asyncio
-async def test_cot_structure_and_context(
-    agent: PodcastReasoningAgent,
-    mock_tot_result: dict[str, Any],
-    mock_cot_result: dict[str, Any],
-) -> None:
-    """CoT 결과에 필수 필드가 있고, ToT 결과가 프롬프트에 포함된다."""
-    mock = AsyncMock(return_value=mock_cot_result)
-    with patch.object(agent, "call_llm_json", mock):
-        result = await agent._chain_of_thoughts(
+    # CoT
+    mock_c = AsyncMock(return_value=mock_cot_result)
+    with patch.object(agent, "call_llm_json", mock_c):
+        cot = await agent._chain_of_thoughts(
             user_input="스트레스 관리",
             intent={"primary_intent": "coping"},
             got_result=None,
@@ -457,14 +420,8 @@ async def test_cot_structure_and_context(
             memory_result=None,
             knowledge_result=None,
         )
-
-    assert "episode_structure" in result
-    assert "narrative_flow" in result
-    assert "confidence" in result
-    user_message = mock.call_args.kwargs.get(
-        "user_message", mock.call_args.args[1] if len(mock.call_args.args) > 1 else ""
-    )
-    assert "ToT 구조 탐색 결과" in user_message
+    assert "episode_structure" in cot and "narrative_flow" in cot and "confidence" in cot
+    assert "ToT 구조 탐색 결과" in _get_user_message(mock_c)
 
 
 # === 10. 하위 호환성 ===
@@ -504,8 +461,13 @@ async def test_legacy_fields_present(
         result = await agent.process(state)
 
     reasoning = result["reasoning_result"]
-    for field in ("episode_structure", "narrative_flow", "key_points",
-                  "emotional_journey", "confidence"):
+    for field in (
+        "episode_structure",
+        "narrative_flow",
+        "key_points",
+        "emotional_journey",
+        "confidence",
+    ):
         assert field in reasoning, f"Missing legacy field: {field}"
     assert reasoning["reasoning_depth"] == depth_label
     assert ("got_result" in reasoning) == has_got
@@ -544,8 +506,9 @@ async def test_edge_case_inputs(
         state_data["intent"] = {"primary_intent": "unknown", "complexity_score": 0.3}
     state = AgentState(**state_data)
 
-    effects = ([mock_tot_result, mock_cot_result] if expected_depth == "standard"
-               else [mock_cot_result])
+    effects = (
+        [mock_tot_result, mock_cot_result] if expected_depth == "standard" else [mock_cot_result]
+    )
     with patch.object(agent, "call_llm_json", AsyncMock(side_effect=effects)):
         result = await agent.process(state)
 
@@ -601,7 +564,7 @@ async def test_di_exception_propagation(
 ) -> None:
     """DI 에이전트에서 예외 발생 시 그대로 전파된다."""
     if failing_agent == "memory":
-        mock_memory.search.side_effect = Exception(error_msg)
+        mock_memory.process.side_effect = Exception(error_msg)
     else:
         mock_knowledge.search.side_effect = Exception(error_msg)
 
@@ -619,8 +582,9 @@ async def test_di_exception_propagation(
         mode="podcast",
         intent={"primary_intent": "test", "complexity_score": 0.7},
     )
-    with patch.object(agent, "call_llm_json",
-                      AsyncMock(side_effect=[mock_tot_result, mock_cot_result])):
+    with patch.object(
+        agent, "call_llm_json", AsyncMock(side_effect=[mock_tot_result, mock_cot_result])
+    ):
         with pytest.raises(Exception, match=error_msg):
             await agent.process(state)
 
@@ -644,3 +608,633 @@ def test_build_phase_context_all_none(agent_with_stubs: PodcastReasoningAgent) -
     assert "[의도 분류]" not in context
     assert "[과거 에피소드 기억]" not in context
     assert "[GoT 그래프 분석 결과]" not in context
+
+
+# ===================================================================
+# Neo4j 저장 + Backend 전송 테스트
+# ===================================================================
+
+
+_SAMPLE_GOT_RESULT: dict[str, Any] = {
+    "nodes": [
+        {
+            "id": 1,
+            "label": "업무 과부하",
+            "type": "concept",
+            "group": "work_structure",
+            "intensity": 0.8,
+        },
+        {
+            "id": 2,
+            "label": "상사 갈등",
+            "type": "concept",
+            "group": "leadership",
+            "intensity": 0.6,
+        },
+    ],
+    "edges": [
+        {"from": 1, "to": 2, "relationship": "causes"},
+    ],
+}
+
+
+def _patch_create_graph_client(**kwargs):
+    """지연 임포트(src.db.factory)를 안전하게 patch하는 헬퍼.
+
+    test_graph_routes.py가 sys.modules에 src.db를 mock으로 등록하면
+    patch("src.db.factory.create_graph_client")가 실패한다.
+    builtins.__import__를 가로채서 지연 임포트 시점에 mock을 주입한다.
+    """
+    import builtins
+
+    real_import = builtins.__import__
+    mock_fn = MagicMock(**kwargs)
+
+    def _fake_import(name, *args, **kw):
+        if name == "src.db.factory":
+            mod = MagicMock()
+            mod.create_graph_client = mock_fn
+            return mod
+        return real_import(name, *args, **kw)
+
+    return patch.object(builtins, "__import__", side_effect=_fake_import), mock_fn
+
+
+class TestSaveGotToNeo4j:
+    @pytest.mark.asyncio
+    async def test_normal_save(self, agent: PodcastReasoningAgent) -> None:
+        mock_client = AsyncMock()
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+        import_patch, mock_fn = _patch_create_graph_client(return_value=mock_cm)
+        with import_patch:
+            await agent._save_got_to_neo4j(
+                _SAMPLE_GOT_RESULT,
+                "sess_001",
+                "ep_001",
+                "user_001",
+            )
+
+        # 2 노드 MERGE + 1 엣지 MERGE + 1 User/Session MERGE + 1 Session→GoTNode 관계 = 5 호출
+        assert mock_client.execute_query.call_count == 5
+
+    @pytest.mark.asyncio
+    async def test_empty_episode_id_skips(self, agent: PodcastReasoningAgent) -> None:
+        import_patch, mock_factory = _patch_create_graph_client()
+        with import_patch:
+            await agent._save_got_to_neo4j(_SAMPLE_GOT_RESULT, "sess_001", "")
+            mock_factory.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_neo4j_failure_graceful(self, agent: PodcastReasoningAgent) -> None:
+        import_patch, _ = _patch_create_graph_client(
+            side_effect=Exception("Neo4j down"),
+        )
+        with import_patch:
+            # 예외가 전파되지 않음 (graceful degradation)
+            await agent._save_got_to_neo4j(_SAMPLE_GOT_RESULT, "sess_001", "ep_001")
+
+
+class TestSaveGraphData:
+    @pytest.mark.asyncio
+    async def test_calls_neo4j_and_publish_graph(self, agent: PodcastReasoningAgent) -> None:
+        """_save_graph_data는 Neo4j 저장 + publish_graph_to_rdb 호출을 모두 수행한다."""
+        state: AgentState = {"user_id": "user_001", "session_id": "sess_001"}
+
+        with (
+            patch.object(agent, "_save_got_to_neo4j", new_callable=AsyncMock) as mock_neo4j,
+            patch(
+                "src.api.graph_cumulative.publish_graph_to_rdb",
+                new_callable=AsyncMock,
+            ) as mock_publish,
+        ):
+            await agent._save_graph_data(_SAMPLE_GOT_RESULT, "sess_001", "ep_001", state)
+
+        mock_neo4j.assert_called_once_with(_SAMPLE_GOT_RESULT, "sess_001", "ep_001", "user_001")
+        mock_publish.assert_called_once()
+
+
+# === Change 2 + 4-C: user_input 안전접근 + GoT/ToT/CoT try/except ===
+
+
+@pytest.mark.asyncio
+async def test_missing_or_empty_user_input_returns_fallback() -> None:
+    """user_input 없거나 빈 문자열 → error fallback 반환."""
+    agent = PodcastReasoningAgent()
+
+    # Case 1: 키 없음
+    state_no_key = AgentState(user_id="u", session_id="s", mode="podcast")
+    result = await agent.process(state_no_key)
+    rr = result["reasoning_result"]
+    assert rr.get("error") == "user_input_missing"
+    assert rr["confidence"] == 0.0
+
+    # Case 2: 빈 문자열
+    state_empty = AgentState(user_input="", user_id="u", session_id="s", mode="podcast")
+    result2 = await agent.process(state_empty)
+    rr2 = result2["reasoning_result"]
+    assert rr2.get("error") == "user_input_missing"
+
+
+@pytest.mark.asyncio
+async def test_got_llm_failure_returns_empty_dict() -> None:
+    """GoT LLM 실패 시 {} 반환 — 파이프라인 중단 없음."""
+    agent = PodcastReasoningAgent()
+    with patch.object(agent, "call_llm_json", side_effect=Exception("LLM error")):
+        result = await agent._graph_of_thoughts("테스트", {}, None, None)
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_tot_llm_failure_returns_empty_dict() -> None:
+    """ToT LLM 실패 시 {} 반환."""
+    agent = PodcastReasoningAgent()
+    with patch.object(agent, "call_llm_json", side_effect=Exception("LLM error")):
+        result = await agent._tree_of_thoughts("테스트", {}, None, None, None)
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_cot_llm_failure_returns_empty_dict() -> None:
+    """CoT LLM 실패 시 {} 반환."""
+    agent = PodcastReasoningAgent()
+    with patch.object(agent, "call_llm_json", side_effect=Exception("LLM error")):
+        result = await agent._chain_of_thoughts("테스트", {}, None, None, None, None)
+    assert result == {}
+
+
+# === LLM 실제 호출 테스트 ===
+
+
+@pytest.mark.live
+class TestPodcastReasoningWithLLM:
+    """PodcastReasoningAgent LLM 실제 호출 테스트."""
+
+    @pytest.fixture
+    def agent(self, llm_client) -> PodcastReasoningAgent:
+        if llm_client is None:
+            pytest.skip("LLM client not available")
+        ag = PodcastReasoningAgent()
+        ag.llm_client = llm_client
+        return ag
+
+    @pytest.mark.asyncio
+    async def test_llm_reasoning_result_structure(self, agent: PodcastReasoningAgent) -> None:
+        """실제 LLM이 올바른 reasoning_result를 반환한다."""
+        import time
+
+        state = AgentState(
+            user_input="직장 스트레스로 번아웃이 왔어요. 무기력하고 의욕이 없습니다.",
+            user_id="u",
+            session_id="s",
+            mode="podcast",
+            content_analysis={
+                "main_theme": "번아웃 회복",
+                "sub_themes": ["직장 스트레스", "무기력", "자기돌봄"],
+                "emotional_journey": {
+                    "opening": "무기력",
+                    "development": "이해",
+                    "climax": "전환점",
+                    "closing": "회복",
+                },
+                "target_duration": 5,
+                "confidence": 0.85,
+            },
+        )
+        start = time.time()
+        result = await agent.process(state)
+        elapsed = time.time() - start
+
+        rr = result.get("reasoning_result", {})
+        print(f"\n[PodcastReasoning] ⏱️ {elapsed:.2f}초")
+        print(f"  reasoning_depth={rr.get('reasoning_depth')}, keys={list(rr.keys())[:5]}")
+
+        assert isinstance(rr, dict)
+        assert len(rr) > 0
+
+    @pytest.mark.asyncio
+    async def test_llm_reasoning_depth_key_present(self, agent: PodcastReasoningAgent) -> None:
+        """reasoning_result에 reasoning_depth 키가 포함된다."""
+        import time
+
+        state = AgentState(
+            user_input="불안하고 우울한 기분이에요.",
+            user_id="u",
+            session_id="s",
+            mode="podcast",
+            content_analysis={
+                "main_theme": "불안 관리",
+                "sub_themes": ["불안", "우울"],
+                "target_duration": 3,
+            },
+        )
+        start = time.time()
+        result = await agent.process(state)
+        elapsed = time.time() - start
+
+        rr = result.get("reasoning_result", {})
+        print(f"\n[PodcastReasoning depth] ⏱️ {elapsed:.2f}초")
+        print(f"  reasoning_depth={rr.get('reasoning_depth')}")
+
+        assert "reasoning_depth" in rr
+        assert rr["reasoning_depth"] in {"full", "standard", "minimal"}
+
+
+# === 15. memory_style_score_threshold 설정 로드 ===
+
+
+def test_memory_style_score_threshold_default() -> None:
+    """memory_style_score_threshold 기본값이 0.9로 로드된다."""
+    agent = PodcastReasoningAgent()
+    assert hasattr(agent, "memory_style_score_threshold")
+    assert agent.memory_style_score_threshold == 0.9
+
+
+# === 16. _build_phase_context — phase별 메모리 분기 ===
+
+
+def test_build_phase_context_got_memory_count_only(
+    agent_with_stubs: PodcastReasoningAgent,
+) -> None:
+    """GoT phase: memory_result가 있어도 건수 요약만 포함되고 원문은 포함되지 않는다."""
+    memory_result = {
+        "episodes": [
+            {
+                "text": "안녕하세요. 번아웃 에피소드 원문입니다.",
+                "score": 0.94,
+                "metadata": {
+                    "date": "2026-04-10T14:32:15",
+                    "episode_title": "번아웃과 리더십",
+                },
+            }
+        ],
+        "summary": "번아웃 관련 1개 에피소드",
+    }
+    context = agent_with_stubs._build_phase_context(
+        phase="GoT",
+        user_input="요즘 너무 힘들어요.",
+        intent={},
+        memory_result=memory_result,
+    )
+    assert "[과거 에피소드 기억]" in context
+    assert "1건 발견" in context
+    assert "번아웃 에피소드 원문" not in context
+    assert "번아웃과 리더십" not in context
+
+
+def test_build_phase_context_tot_metadata_only(
+    agent_with_stubs: PodcastReasoningAgent,
+) -> None:
+    """ToT phase: 에피소드 제목·날짜가 포함되고 원문 텍스트는 포함되지 않는다."""
+    memory_result = {
+        "episodes": [
+            {
+                "text": "안녕하세요. 번아웃 에피소드 원문입니다.",
+                "score": 0.94,
+                "metadata": {
+                    "date": "2026-04-10T14:32:15",
+                    "episode_title": "번아웃과 리더십",
+                },
+            },
+            {
+                "text": "수면 문제 에피소드 원문입니다.",
+                "score": 0.81,
+                "metadata": {
+                    "date": "2026-03-28T09:15:44",
+                    "episode_title": "잠 못 드는 밤",
+                },
+            },
+        ],
+        "summary": "번아웃, 수면 관련 2개 에피소드",
+    }
+    context = agent_with_stubs._build_phase_context(
+        phase="ToT",
+        user_input="요즘 너무 힘들어요.",
+        intent={},
+        memory_result=memory_result,
+    )
+    assert "[과거 에피소드 기억 — 구조 참고]" in context
+    assert "2026-04-10" in context
+    assert "번아웃과 리더십" in context
+    assert "2026-03-28" in context
+    assert "잠 못 드는 밤" in context
+    # 원문 텍스트 미포함
+    assert "번아웃 에피소드 원문" not in context
+    assert "수면 문제 에피소드 원문" not in context
+    # 다양성 가이드 문구 포함
+    assert "다양성" in context
+
+
+def test_build_phase_context_tot_missing_date_fallback(
+    agent_with_stubs: PodcastReasoningAgent,
+) -> None:
+    """ToT phase: metadata.date 없을 때 '날짜 없음' 폴백이 적용된다."""
+    memory_result = {
+        "episodes": [
+            {
+                "text": "날짜 없는 에피소드.",
+                "score": 0.85,
+                "metadata": {
+                    "episode_title": "날짜 없는 에피소드",
+                },
+            }
+        ],
+        "summary": "",
+    }
+    context = agent_with_stubs._build_phase_context(
+        phase="ToT",
+        user_input="요즘 너무 힘들어요.",
+        intent={},
+        memory_result=memory_result,
+    )
+    assert "날짜 없음" in context
+    assert "날짜 없는 에피소드" in context
+
+
+def test_build_phase_context_cot_includes_high_score_text(
+    agent_with_stubs: PodcastReasoningAgent,
+) -> None:
+    """CoT phase: score >= threshold 에피소드의 원문 발췌가 포함된다."""
+    agent_with_stubs.memory_style_score_threshold = 0.9
+    memory_result = {
+        "episodes": [
+            {
+                "text": "안녕하세요. 번아웃 에피소드 원문입니다. 긴 텍스트가 여기 있습니다.",
+                "score": 0.94,
+                "metadata": {
+                    "date": "2026-04-10T14:32:15",
+                    "episode_title": "번아웃과 리더십",
+                },
+            }
+        ],
+        "summary": "번아웃 관련 1개 에피소드",
+    }
+    context = agent_with_stubs._build_phase_context(
+        phase="CoT",
+        user_input="요즘 너무 힘들어요.",
+        intent={},
+        memory_result=memory_result,
+    )
+    assert "[과거 에피소드 스타일 참고]" in context
+    assert "요약: 번아웃 관련 1개 에피소드" in context
+    assert "번아웃과 리더십" in context
+    assert "0.94" in context
+    assert "번아웃 에피소드 원문" in context
+    assert "스타일" in context
+
+
+def test_build_phase_context_cot_excludes_low_score_text(
+    agent_with_stubs: PodcastReasoningAgent,
+) -> None:
+    """CoT phase: score < threshold 에피소드의 원문 발췌는 포함되지 않는다."""
+    agent_with_stubs.memory_style_score_threshold = 0.9
+    memory_result = {
+        "episodes": [
+            {
+                "text": "낮은 유사도 에피소드 원문입니다.",
+                "score": 0.75,
+                "metadata": {
+                    "date": "2026-03-01T10:00:00",
+                    "episode_title": "낮은 유사도 에피소드",
+                },
+            }
+        ],
+        "summary": "",
+    }
+    context = agent_with_stubs._build_phase_context(
+        phase="CoT",
+        user_input="요즘 너무 힘들어요.",
+        intent={},
+        memory_result=memory_result,
+    )
+    # 임계값 미달 에피소드만 있고 summary도 없으면 섹션 전체가 생략된다
+    assert "[과거 에피소드 스타일 참고]" not in context
+    assert "낮은 유사도 에피소드 원문" not in context
+
+
+def test_build_phase_context_cot_no_memory(
+    agent_with_stubs: PodcastReasoningAgent,
+) -> None:
+    """CoT phase: memory_result=None이면 메모리 섹션이 없다."""
+    context = agent_with_stubs._build_phase_context(
+        phase="CoT",
+        user_input="요즘 너무 힘들어요.",
+        intent={},
+        memory_result=None,
+    )
+    assert "[과거 에피소드 스타일 참고]" not in context
+    assert "[과거 에피소드 기억]" not in context
+
+
+# === Knowledge Result — phase별 주입 ===
+
+
+def test_build_phase_context_got_knowledge_count_only(
+    agent_with_stubs: PodcastReasoningAgent,
+) -> None:
+    """GoT phase: knowledge_result가 있어도 건수만 포함되고 원문·제목은 포함되지 않는다."""
+    knowledge_result = {
+        "articles": [
+            {
+                "id": "doc1",
+                "title": "CBT 인지왜곡",
+                "content": "인지왜곡은 자동적 사고의 일종으로 ...",
+                "score": 0.88,
+                "source": "CBT Handbook",
+            }
+        ],
+        "guidelines": [],
+    }
+    context = agent_with_stubs._build_phase_context(
+        phase="GoT",
+        user_input="요즘 너무 힘들어요.",
+        intent={},
+        knowledge_result=knowledge_result,
+    )
+    assert "[관련 전문 지식]" in context
+    assert "1건 발견" in context
+    # GoT은 건수만 — 제목/본문 노출 금지 (노드 오염 방지)
+    assert "CBT 인지왜곡" not in context
+    assert "인지왜곡은 자동적 사고" not in context
+
+
+def test_build_phase_context_tot_knowledge_titles(
+    agent_with_stubs: PodcastReasoningAgent,
+) -> None:
+    """ToT phase: 기사 제목이 포함되지만 본문은 포함되지 않는다."""
+    knowledge_result = {
+        "articles": [
+            {"id": "doc1", "title": "CBT 인지왜곡", "content": "본문A", "source": "A"},
+            {"id": "doc2", "title": "DBT 감정조절", "content": "본문B", "source": "B"},
+        ],
+        "guidelines": [],
+    }
+    context = agent_with_stubs._build_phase_context(
+        phase="ToT",
+        user_input="요즘 너무 힘들어요.",
+        intent={},
+        knowledge_result=knowledge_result,
+    )
+    assert "[관련 전문 지식 — 제목 참고]" in context
+    assert "CBT 인지왜곡" in context
+    assert "DBT 감정조절" in context
+    # 본문은 ToT에 주입 금지
+    assert "본문A" not in context
+    assert "본문B" not in context
+
+
+def test_build_phase_context_cot_knowledge_with_synthesis(
+    agent_with_stubs: PodcastReasoningAgent,
+) -> None:
+    """CoT phase: _synthesis 기사가 있으면 그 content를 요약 근거로 사용한다."""
+    knowledge_result = {
+        "articles": [
+            {
+                "id": "_synthesis",
+                "title": "검색 결과 종합",
+                "content": "번아웃은 만성 스트레스 누적으로 발생하며 CBT가 효과적이다.",
+                "score": 1.0,
+                "source": "KT RAG Suite TextGen",
+            },
+            {"id": "doc1", "title": "CBT 인지왜곡", "content": "본문A", "source": "A"},
+        ],
+        "guidelines": [],
+    }
+    context = agent_with_stubs._build_phase_context(
+        phase="CoT",
+        user_input="요즘 너무 힘들어요.",
+        intent={},
+        knowledge_result=knowledge_result,
+    )
+    assert "[관련 전문 지식 — 근거]" in context
+    assert "번아웃은 만성 스트레스" in context  # synthesis content 주입
+
+
+def test_build_phase_context_cot_knowledge_fallback_to_top_articles(
+    agent_with_stubs: PodcastReasoningAgent,
+) -> None:
+    """CoT phase: _synthesis 없으면 상위 기사 title+content 일부를 근거로 주입한다."""
+    knowledge_result = {
+        "articles": [
+            {
+                "id": "doc1",
+                "title": "CBT 인지왜곡",
+                "content": "인지왜곡은 자동적 사고의 일종입니다. " * 30,  # 200자 넘김
+                "score": 0.88,
+                "source": "CBT Handbook",
+            },
+            {
+                "id": "doc2",
+                "title": "DBT 감정조절",
+                "content": "DBT는 변증법적 행동치료입니다.",
+                "score": 0.75,
+                "source": "DBT Manual",
+            },
+        ],
+        "guidelines": [],
+    }
+    context = agent_with_stubs._build_phase_context(
+        phase="CoT",
+        user_input="요즘 너무 힘들어요.",
+        intent={},
+        knowledge_result=knowledge_result,
+    )
+    assert "[관련 전문 지식 — 근거]" in context
+    assert "CBT 인지왜곡" in context
+    assert "CBT Handbook" in context
+    assert "DBT 감정조절" in context
+
+
+# ===================================================================
+# CRISIS 폴백 — risk_level >= 4면 reasoning 스킵, LLM 미호출
+# ===================================================================
+
+
+@pytest.mark.asyncio
+async def test_crisis_skips_reasoning_pipeline(
+    agent: PodcastReasoningAgent,
+) -> None:
+    """Intent Classifier가 CRISIS(risk_level=4)를 설정하면 GoT/ToT/CoT 모두 스킵."""
+    crisis_state = AgentState(
+        user_input="살고 싶지 않아요",
+        user_id="test_user",
+        session_id="sess_crisis",
+        mode="podcast",
+        intent={"primary_intent": "crisis_support", "complexity_score": 1.0},
+        risk_level=4,
+        risk_score=1.0,
+        safety_flags={"risk_detected": True},
+    )
+    mock_llm = AsyncMock()
+    with patch.object(agent, "call_llm_json", mock_llm):
+        result = await agent.process(crisis_state)
+
+    # LLM 미호출 확인
+    assert mock_llm.call_count == 0
+    # 폴백 reasoning_result 구조
+    reasoning = result["reasoning_result"]
+    assert reasoning["reasoning_strategy"] == "crisis_skip"
+    assert reasoning["reasoning_depth"] == "minimal"
+    assert reasoning["confidence"] == 0.0
+    assert reasoning["episode_structure"] == []
+    # 조건부 필드는 미포함 (메모리/지식 호출도 안 함)
+    assert "memory_results" not in result
+    assert "knowledge_results" not in result
+
+
+@pytest.mark.asyncio
+async def test_normal_state_does_not_trigger_crisis_skip(
+    agent: PodcastReasoningAgent,
+    base_state: AgentState,
+    mock_got_result: dict[str, Any],
+    mock_tot_result: dict[str, Any],
+    mock_cot_result: dict[str, Any],
+) -> None:
+    """risk_level=0(정상)이면 reasoning 파이프라인이 정상 실행된다 (회귀 방지)."""
+    # base_state는 risk_level 미설정 (기본값 0) → CRISIS 가드 통과
+    mock_full = AsyncMock(side_effect=[mock_got_result, mock_tot_result, mock_cot_result])
+    with patch.object(agent, "call_llm_json", mock_full):
+        result = await agent.process(base_state)
+
+    assert mock_full.call_count == 3
+    assert result["reasoning_result"]["reasoning_depth"] == "full"
+    assert result["reasoning_result"]["reasoning_strategy"] != "crisis_skip"
+
+
+# ===================================================================
+# ToT 키 정합 — branches/narrative_structure가 CoT 컨텍스트에 반영되는지
+# ===================================================================
+
+
+def test_tot_context_uses_branches_and_narrative_structure(
+    agent_with_stubs: PodcastReasoningAgent,
+) -> None:
+    """_build_phase_context가 ToT의 branches/narrative_structure를 올바르게 추출한다.
+
+    회귀 방지: 이전엔 alternatives/selected 키를 찾아 항상 0개로 표시되던 버그.
+    """
+    tot_result = {
+        "branches": [
+            {"structure": "discovery", "pros": ["a"], "cons": ["b"]},
+            {"structure": "conversation", "pros": ["c"], "cons": ["d"]},
+            {"structure": "reflection", "pros": ["e"], "cons": ["f"]},
+        ],
+        "narrative_structure": "discovery",
+        "target_duration": 5,
+        "selection_rationale": "체계적 구조 선호",
+    }
+    context = agent_with_stubs._build_phase_context(
+        phase="CoT",
+        user_input="테스트 입력",
+        intent={},
+        tot_result=tot_result,
+    )
+    assert "[ToT 구조 탐색 결과]" in context
+    assert "3개 대안" in context
+    assert "'discovery'" in context
+    assert "목표 5분" in context
+    assert "체계적 구조 선호" in context
+    # 회귀 방지: 잘못된 키로 0개로 표시되지 않아야 함
+    assert "0개 대안" not in context
