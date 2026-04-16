@@ -1,0 +1,17 @@
+# 배포 불필요 파일 — develop → main 머지 시 main 버전(삭제 상태)을 유지
+docs/_archive/ merge=ours
+presentation_script.md merge=ours
+dev/test_ollama.py merge=ours
+dev/ollama_bootstrap.py merge=ours
+dev/ollama_provider.py merge=ours
+dev/ollama_config.yaml merge=ours
+dev/live_tests/results/ merge=ours
+dev/local_db/results/ merge=ours
+data/outputs/images/ merge=ours
+docs/changelog/ merge=ours
+docs/guides/BE_API_TEST_RESULT_2026-04-08.md merge=ours
+docs/guides/NEO4J_DEPLOYMENT_ANALYSIS.md merge=ours
+docs/presentation/ merge=ours
+docs/reports/ merge=ours
+docs/superpowers/ merge=ours
+docs/INDEX.md merge=ours
