@@ -55,10 +55,17 @@ class LearningAgent(BaseAgent):
         learning_context = self._build_learning_context(state)
 
         # LLM으로 사용자 패턴 분석
-        learning_data = await self.call_llm_json(
-            system_prompt=self.get_prompt("system_prompt"),
-            user_message=learning_context,
-        )
+        try:
+            learning_data = await self.call_llm_json(
+                system_prompt=self.get_prompt("system_prompt"),
+                user_message=learning_context,
+            )
+        except Exception as e:
+            self.logger.warning(
+                "[LearningAgent] LLM 응답 파싱 실패 — 빈 학습 데이터로 계속: %s",
+                type(e).__name__,
+            )
+            learning_data = {}
 
         # 백엔드 API로 학습 결과 저장
         await self._save_learning_result(
