@@ -3,15 +3,15 @@
 # 직전 배포 이미지로 AI 서버를 롤백한다.
 #
 # EC2에서 직접 실행:
-#   sudo bash /home/ubuntu/app/scripts/rollback.sh
+#   sudo bash /home/ubuntu/ai_server/scripts/rollback.sh
 #
 # 전제 조건:
-#   - /home/ubuntu/app/.prev_image 파일이 존재해야 한다 (deploy.yml이 자동 생성)
-#   - Docker Compose 환경이 /home/ubuntu/app에 구성되어 있어야 한다
+#   - /home/ubuntu/ai_server/.prev_image 파일이 존재해야 한다 (deploy.yml이 자동 생성)
+#   - Docker Compose 환경이 /home/ubuntu/ai_server에 구성되어 있어야 한다
 
 set -euo pipefail
 
-APP_DIR="/home/ubuntu/app"
+APP_DIR="/home/ubuntu/ai_server"
 PREV_IMAGE_FILE="$APP_DIR/.prev_image"
 
 if [ ! -f "$PREV_IMAGE_FILE" ]; then
