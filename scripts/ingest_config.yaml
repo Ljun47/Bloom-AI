@@ -17,6 +17,33 @@ documents:
     domain: mental_health
     title: 상담성과_지속성_분석
 
+  - path: scripts/pdfs/변증법적_행동치료_기반_프로그램_개발_및_효과.pdf
+    domain: mental_health
+    title: 변증법적_행동치료_기반_프로그램_개발_및_효과
+
+  - path: scripts/pdfs/변증법적행동치료_정서조절과_대인관계_유능성.pdf
+    domain: mental_health
+    title: 변증법적행동치료_정서조절과_대인관계_유능성
+
+  - path: scripts/pdfs/불안장애의_인지행동_통합예술치료에_대한_내러티브_연구.pdf
+    domain: mental_health
+    title: 불안장애의_인지행동_통합예술치료에_대한_내러티브_연구
+
+  - path: scripts/pdfs/변증법적행동치료_프로그램_개발_및_효과_분석.pdf
+    domain: mental_health
+    title: 변증법적행동치료_프로그램_개발_및_효과_분석
+
+  - path: scripts/pdfs/인지치료_프로그램이_성인의_우울감소에_미치는_효과.pdf
+    domain: mental_health
+    title: 인지치료_프로그램이_성인의_우울감소에_미치는_효과
+
+  - path: scripts/pdfs/변증법적_행동치료_집단기술훈련_프로그램_개발_및_효과분석.pdf
+    domain: mental_health
+    title: 변증법적_행동치료_집단기술훈련_프로그램_개발_및_효과분석
+
+  - path: scripts/pdfs/청소년의_애착,_대인관계_특성,_자살생각과의_관계.pdf
+    domain: mental_health
+    title: 청소년의_애착,_대인관계_특성,_자살생각과의_관계
   # - path: scripts/pdfs/stress_management.pdf
   #   domain: mental_health
   #   title: 스트레스 관리 매뉴얼
