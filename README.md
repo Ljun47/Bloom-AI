@@ -17,8 +17,9 @@ TIER 0: Intent Classifier → 의도 분류 + 1차 위기 감지
 TIER 1 (병렬 Fan-out): Safety + Emotion + Content Analyzer + Podcast Reasoning
 TIER 2 (생성): Script Generator + Visualization (병렬)
 TIER 3 (검증): Batch Validator (실패 시 TIER 2 재시도, 최대 2회)
+대기: wait_for_stories (프론트엔드 Stories 데이터 수신 대기, 최대 300초)
 TIER 4 (후처리): Script Personalizer
-비동기: Learning Agent
+비동기: Learning Agent + Episode Memory 저장
 ```
 
 | 항목 | 내용 |
@@ -33,13 +34,14 @@ TIER 4 (후처리): Script Personalizer
 
 | 구분 | 기술 |
 |------|------|
-| LLM | Anthropic Claude (Opus 4.6, Sonnet 4, Haiku) / AWS Bedrock |
+| LLM | Anthropic Claude (Opus 4.6, Sonnet 4, Haiku), AWS Bedrock, OpenAI (Qwen3-32B) / Ollama(개발용) |
 | 오케스트레이션 | LangGraph StateGraph |
-| 벡터 DB | Pinecone |
-| 관계형 DB | MySQL |
+| 벡터 DB / RAG | Pinecone, KT Cloud RAG Suite |
+| 관계형 DB | MySQL (PyMySQL) |
 | 그래프 DB | Neo4j |
-| 캐시 | Redis (선택적 — Intent Classifier 캐싱용, 기본 비활성) |
+| 캐시 | Redis (선택적 — Intent Classifier 캐싱용, 사용 시 requirements.txt에 redis 라이브러리 추가 필요) |
 | 이미지 저장 | S3 / CDN |
+| 모니터링 / 추적 | LangSmith (에이전트 트레이싱), Prometheus (메트릭 수집) |
 | 프레임워크 | FastAPI + Uvicorn |
 | CI/CD | GitHub Actions |
 
@@ -49,8 +51,8 @@ TIER 4 (후처리): Script Personalizer
 
 ```bash
 # 1. 저장소 클론
-git clone https://github.com/your-org/mind-log.git
-cd mind-log
+git clone https://github.com/Ljun47/mind-log-ai.git
+cd mind-log-ai
 
 # 2. 가상환경 생성
 python -m venv .venv
