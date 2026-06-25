@@ -191,13 +191,3 @@ mind-log/
 | 개발자1 | Intent Classifier, Knowledge, Script Generator, Script Personalizer |
 | 개발자2 | Safety, Emotion, Visualization, Episode Memory |
 | 개발자3 | Podcast Reasoning, Content Analyzer, Batch Validator, Learning |
-
----
-
-## 라이선스
-
-MIT License
-
----
-
-*마지막 업데이트: 2026-04-14 11:00*
