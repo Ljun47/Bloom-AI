@@ -90,7 +90,7 @@ Peak State Size: 19~37 KB
 
 - **데이터 효율**: 30~50% (reasoning, trace_id, classified_at 미사용)
 - **알려진 이슈**:
-  - [S-1] `risk_level`, `risk_score`, `safety_flags` 쓰기 -- 개발자2 전용 필드 경계 위반
+  - [S-1] `risk_level`, `risk_score`, `safety_flags` 쓰기 -- 한가은 전용 필드 경계 위반
   - [B-3] Safety Agent와 이중 위험평가
 
 ---
@@ -631,18 +631,18 @@ agents:
 | # | 심각도 | 이슈 | 파일 | 담당 |
 |---|--------|------|------|------|
 | B-1 | ~~CRITICAL~~ RESOLVED | Conversation/Podcast 그래프 TIER 0 건너뜀 — 대화모드 제거 완료 (PR #45) | workflow.py | 3인합의 |
-| B-2 | ~~CRITICAL~~ RESOLVED | Crisis Deep Response — `required_in_script` 활용으로 법적 고지/상담 번호 전달 (v26) | workflow.py:278~301 | 개발자2 |
-| B-3 | HIGH | 이중 위험평가 (Intent + Safety 중복) | intent_classifier.py, safety.py | 개발자1+2 |
-| B-4 | HIGH | Safety/Emotion이 전체 intent dict를 LLM에 전달 (200~400토큰 낭비) | safety.py:54, emotion.py:36 | 개발자2 |
-| B-5 | ~~MEDIUM~~ RESOLVED | Script Personalizer emotional_journey — content_analysis에서 조건부 로드 | script_personalizer.py | 개발자1 |
-| B-7 | MEDIUM | Knowledge Agent domain_hints 미전달 | knowledge.py | 개발자1 |
+| B-2 | ~~CRITICAL~~ RESOLVED | Crisis Deep Response — `required_in_script` 활용으로 법적 고지/상담 번호 전달 (v26) | workflow.py:278~301 | 한가은 |
+| B-3 | HIGH | 이중 위험평가 (Intent + Safety 중복) | intent_classifier.py, safety.py | 이준+2 |
+| B-4 | HIGH | Safety/Emotion이 전체 intent dict를 LLM에 전달 (200~400토큰 낭비) | safety.py:54, emotion.py:36 | 한가은 |
+| B-5 | ~~MEDIUM~~ RESOLVED | Script Personalizer emotional_journey — content_analysis에서 조건부 로드 | script_personalizer.py | 이준 |
+| B-7 | MEDIUM | Knowledge Agent domain_hints 미전달 | knowledge.py | 이준 |
 | B-8 | LOW | CONTRIBUTING.md 노드 시그니처 불일치 | CONTRIBUTING.md:58 | 문서 (수정 완료) |
 
 ### AgentState 필드 접근 위반
 
 | # | 심각도 | 이슈 | 에이전트 |
 |---|--------|------|----------|
-| S-1 | HIGH | 개발자 경계 위반: Intent가 개발자2 필드 쓰기 (risk_level, risk_score, safety_flags) | Intent Classifier |
+| S-1 | HIGH | 개발자 경계 위반: Intent가 한가은 필드 쓰기 (risk_level, risk_score, safety_flags) | Intent Classifier |
 | S-2 | ~~HIGH~~ RESOLVED | 출력 키 불일치: visual_data로 수정 완료 (visualization.py:64) | Visualization |
 | S-3 | MEDIUM | 미정의 필드 읽기: domain_hints, user_context | Knowledge |
 | S-4 | MEDIUM | Script Generator 다수 필드 직접 읽기 문서화 필요 | Script Generator |

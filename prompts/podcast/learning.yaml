@@ -1,5 +1,5 @@
 # Learning Agent — 사용자 패턴 학습 에이전트 (비동기)
-# 담당: 개발자3
+# 담당: 이경신
 # TIER: 비동기 후처리 | 모델: Haiku
 
 default_version: "1.0.0"

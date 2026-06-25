@@ -3,7 +3,7 @@
 > **작성일**: 2026-04-07
 > **대상**: AI팀 · Backend팀 · 인프라팀
 > **버전**: v1.3
-> **담당**: 개발자3 (AI팀)
+> **담당**: 이경신 (AI팀)
 
 ---
 
@@ -331,11 +331,11 @@ async with create_graph_client() as client:
 | 항목 | 현재 상태 | 필요 작업 | 누가 |
 |------|---------|---------|------|
 | **프로덕션 Neo4j** | 주석 처리 (docker-compose.yml) | 인스턴스 배포 + 주석 해제 | 인프라팀 |
-| **Knowledge Agent** | Stub (항상 빈 결과) | 실제 Neo4j 쿼리 구현 | 개발자3 (Pinecone 연동과 함께 차후) |
-| **Emotion/Topic 초기 데이터** | ✅ seed_data.json에 포함 (Emotion 4개, Topic 3개) | 프로덕션 적재 시 실행 | 개발자3 |
+| **Knowledge Agent** | Stub (항상 빈 결과) | 실제 Neo4j 쿼리 구현 | 이경신 (Pinecone 연동과 함께 차후) |
+| **Emotion/Topic 초기 데이터** | ✅ seed_data.json에 포함 (Emotion 4개, Topic 3개) | 프로덕션 적재 시 실행 | 이경신 |
 | **GoTNode 시드 데이터 group 필드** | ✅ seed_data.json 3개 노드에 추가 완료 | — | — |
 | **Backend 누적 데이터 조회 API** | 미구현 | 프론트엔드 그래프 시각화용 | Backend팀 |
-| **MySQL ↔ Neo4j 동기화** | 미구현 | mysql_id 기반 MERGE 로직 | 개발자3 + Backend팀 |
+| **MySQL ↔ Neo4j 동기화** | 미구현 | mysql_id 기반 MERGE 로직 | 이경신 + Backend팀 |
 
 ### 5-3. 파일 구조
 
@@ -807,9 +807,9 @@ LIMIT 10;
 
 ## 7. 팀별 역할 및 담당 작업
 
-### 개발자3 (AI팀) — 전체 Neo4j 구현 담당
+### 이경신 (AI팀) — 전체 Neo4j 구현 담당
 
-개발자3이 Neo4j 관련 **모든 구현과 유지보수를 담당**한다.
+이경신이 Neo4j 관련 **모든 구현과 유지보수를 담당**한다.
 
 **이미 완료한 것:**
 - Neo4j DB 접속 레이어 (`src/db/` 전체)
@@ -877,8 +877,8 @@ Phase 1 ─── 의사결정 (전체 팀, ~1일)
 Phase 2 ─── 인프라 준비 (인프라팀, ~2일)
     │
     ▼
-Phase 3 ─── 병렬 구현 (개발자3 + Backend팀)
-    │         ├─ 3-A: 개발자3 — Neo4j 초기 데이터 적재 + 저장 검증
+Phase 3 ─── 병렬 구현 (이경신 + Backend팀)
+    │         ├─ 3-A: 이경신 — Neo4j 초기 데이터 적재 + 저장 검증
     │         └─ 3-B: Backend팀 — RDB 누적 API 구현
     │
     ▼
@@ -896,7 +896,7 @@ Phase 5 ─── 프로덕션 배포 (인프라팀 주도)
 |---|---------|--------|
 | 1 | Neo4j 배포 위치 (같은 서버 vs 별도 인스턴스) | 인프라팀 + 팀 리드 |
 | 2 | 인스턴스 업그레이드 여부 (4GB → 8GB) | 인프라팀 |
-| 3 | RDB 누적 테이블 스키마 합의 (`user_graph_nodes`, `user_graph_edges`) | 개발자3 + Backend팀 |
+| 3 | RDB 누적 테이블 스키마 합의 (`user_graph_nodes`, `user_graph_edges`) | 이경신 + Backend팀 |
 
 ---
 
@@ -917,7 +917,7 @@ Phase 5 ─── 프로덕션 배포 (인프라팀 주도)
 
 ---
 
-### Phase 3-A — 개발자3 작업 (인프라 완료 후)
+### Phase 3-A — 이경신 작업 (인프라 완료 후)
 
 | # | 작업 | 파일 |
 |---|------|------|
@@ -939,10 +939,10 @@ Phase 5 ─── 프로덕션 배포 (인프라팀 주도)
 
 | # | 검증 항목 | 담당 |
 |---|---------|------|
-| 4-1 | Neo4j 통합 테스트 | 개발자3 — `pytest dev/local_db/test_neo4j_integration.py -v` |
-| 4-2 | GoT 저장 → Neo4j 조회 일치 확인 | 개발자3 |
-| 4-3 | RDB 누적 저장 API 통합 테스트 | 개발자3 + Backend팀 |
-| 4-4 | 프론트엔드 그래프 시각화 연동 확인 | 개발자3 + Backend팀 + 프론트팀 |
+| 4-1 | Neo4j 통합 테스트 | 이경신 — `pytest dev/local_db/test_neo4j_integration.py -v` |
+| 4-2 | GoT 저장 → Neo4j 조회 일치 확인 | 이경신 |
+| 4-3 | RDB 누적 저장 API 통합 테스트 | 이경신 + Backend팀 |
+| 4-4 | 프론트엔드 그래프 시각화 연동 확인 | 이경신 + Backend팀 + 프론트팀 |
 | 4-5 | 메모리 모니터링 (24시간 OOM 없이 안정) | 인프라팀 |
 
 ---

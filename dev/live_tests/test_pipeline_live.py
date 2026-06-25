@@ -4,7 +4,7 @@
 LangGraph 없이 수동으로 에이전트를 체이닝하여
 TIER 1 → TIER 2(mock) → TIER 3 → 비동기 흐름을 검증한다.
 
-Script Generator는 개발자1 담당이며 아직 구현되지 않았으므로
+Script Generator는 이준 담당이며 아직 구현되지 않았으므로
 generate_mock_script()로 시뮬레이션한다 (fixtures.py 참조).
 
 사용법:
@@ -38,7 +38,7 @@ async def run_test(
     파이프라인 시뮬레이션을 실행한다.
 
     Step 1: TIER 1 — Content Analyzer + Podcast Reasoning (순차 실행)
-    Step 2: Mock Script Generator (TIER 2 — 개발자1 미구현)
+    Step 2: Mock Script Generator (TIER 2 — 이준 미구현)
     Step 3: TIER 3 — Batch Validator
     Step 4: 비동기 — Learning Agent (BackendClient mock)
 
@@ -113,8 +113,8 @@ async def run_test(
         # ════════════════════════════════════════
         # Step 2: TIER 2 — Mock Script Generator
         # ════════════════════════════════════════
-        print_banner("Step 2: TIER 2 — Mock Script Generator (개발자1 미구현)", color="yellow")
-        print("  Script Generator는 개발자1 담당이며 아직 구현되지 않았다.")
+        print_banner("Step 2: TIER 2 — Mock Script Generator (이준 미구현)", color="yellow")
+        print("  Script Generator는 이준 담당이며 아직 구현되지 않았다.")
         print("  generate_mock_script()로 시뮬레이션한다.")
         print("  Content Analyzer와 Podcast Reasoning의 출력을 참조하여")
         print("  현실적인 script_draft 구조를 생성한다.")
@@ -126,7 +126,7 @@ async def run_test(
         print(f"  mock script_draft.total_duration: {mock_script.get('total_duration', 'N/A')}초")
         print(f"  mock script_draft.segments: {len(mock_script.get('segments', []))}개")
 
-        # Safety/Emotion mock (개발자2 미구현 — TIER 1 공용 에이전트)
+        # Safety/Emotion mock (한가은 미구현 — TIER 1 공용 에이전트)
         if "safety_flags" not in state:
             state["safety_flags"] = {
                 "risk_level": "safe",

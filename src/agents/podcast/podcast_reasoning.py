@@ -5,11 +5,11 @@ TIER 1에서 Safety, Emotion, Content Analyzer와 병렬 실행된다.
 복잡도 기반 3단계 추론 파이프라인(GoT → ToT → CoT)으로
 에피소드 구조를 설계하고 내러티브 흐름을 추론한다.
 
-Episode Memory(개발자2)와 Knowledge Agent(개발자1)를
+Episode Memory(한가은)와 Knowledge Agent(이준)를
 의존성 주입으로 조건부 호출한다.
 통합 전까지는 stub 인터페이스를 사용한다.
 
-담당: 개발자3
+담당: 이경신
 출력 필드: reasoning_result (+조건부: memory_results, knowledge_results)
 모델: Sonnet 4
 

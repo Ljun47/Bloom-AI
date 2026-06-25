@@ -29,7 +29,7 @@ Mind-Log 에이전트를 구현할 때 참고하는 실무 가이드입니다.
 Emotion Agent — 감정 벡터 분석.
 
 TIER 1 (병렬) | 모델: Haiku
-담당: 개발자2
+담당: 한가은
 """
 from __future__ import annotations
 
@@ -81,7 +81,7 @@ Reasoning 계열은 여러 프롬프트를 순차적으로 호출합니다.
 Reasoning Agent — 다단계 추론 (GoT → ToT → CoT).
 
 TIER 1 (병렬) | 모델: Opus 4.6
-담당: 개발자3
+담당: 이경신
 """
 from __future__ import annotations
 

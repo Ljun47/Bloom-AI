@@ -1,5 +1,5 @@
 # Content Analyzer Agent — 팟캐스트 콘텐츠 분석
-# 담당: 개발자3
+# 담당: 이경신
 # 설계 문서: ProjectDocs/agents/podcast/01_content_analyzer.md
 # TIER 1 (병렬) | 모델: Sonnet 4
 # version: "1.0.0"

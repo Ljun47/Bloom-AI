@@ -34,18 +34,18 @@ TIER 4 (후처리): Script Personalizer
 
 | # | 에이전트 | TIER | 모델 | 담당 개발자 |
 |---|---------|------|------|------------|
-| 01 | Intent Classifier | TIER 0 | Haiku | 개발자1 |
-| 02 | Safety Agent | TIER 1 (병렬) | Sonnet | 개발자2 |
-| 03 | Emotion Agent | TIER 1 (병렬) | Haiku | 개발자2 |
-| 04 | Content Analyzer | TIER 1 (병렬) | Haiku | 개발자3 |
-| 05 | Podcast Reasoning | TIER 1 (병렬) | Sonnet | 개발자3 |
-| 06 | Episode Memory | 독립 (Reasoning 조건부) | Sonnet | 개발자2 |
-| 07 | Knowledge Agent | 독립 (Reasoning 조건부) | Sonnet | 개발자1 |
-| 08 | Script Generator | TIER 2 (병렬) | Haiku | 개발자1 |
-| 09 | Visualization | TIER 2 (병렬) / 비동기 | Haiku | 개발자2 |
-| 10 | Batch Validator | TIER 3 | Haiku | 개발자3 |
-| 11 | Script Personalizer | TIER 4 | Sonnet | 개발자1 |
-| 부가 | Learning Agent | 비동기 후처리 | Sonnet | 개발자3 |
+| 01 | Intent Classifier | TIER 0 | Haiku | 이준 |
+| 02 | Safety Agent | TIER 1 (병렬) | Sonnet | 한가은 |
+| 03 | Emotion Agent | TIER 1 (병렬) | Haiku | 한가은 |
+| 04 | Content Analyzer | TIER 1 (병렬) | Haiku | 이경신 |
+| 05 | Podcast Reasoning | TIER 1 (병렬) | Sonnet | 이경신 |
+| 06 | Episode Memory | 독립 (Reasoning 조건부) | Sonnet | 한가은 |
+| 07 | Knowledge Agent | 독립 (Reasoning 조건부) | Sonnet | 이준 |
+| 08 | Script Generator | TIER 2 (병렬) | Haiku | 이준 |
+| 09 | Visualization | TIER 2 (병렬) / 비동기 | Haiku | 한가은 |
+| 10 | Batch Validator | TIER 3 | Haiku | 이경신 |
+| 11 | Script Personalizer | TIER 4 | Sonnet | 이준 |
+| 부가 | Learning Agent | 비동기 후처리 | Sonnet | 이경신 |
 
 ### 파일 위치
 
@@ -99,18 +99,18 @@ Safety의 CRISIS 판정은 **병렬 실행을 중단시키는 선점(preemption)
 
 | 개발자 | 브랜치 접두사 | 담당 에이전트 |
 |--------|-------------|-------------|
-| **개발자1** | `feature/analysis-*` | Intent Classifier, Knowledge, Script Generator, Script Personalizer |
-| **개발자2** | `feature/reasoning-*` | Safety, Emotion, Visualization, Episode Memory |
-| **개발자3** | `feature/validation-*` | Podcast Reasoning, Content Analyzer, Batch Validator, Learning |
+| **이준** | `feature/analysis-*` | Intent Classifier, Knowledge, Script Generator, Script Personalizer |
+| **한가은** | `feature/reasoning-*` | Safety, Emotion, Visualization, Episode Memory |
+| **이경신** | `feature/validation-*` | Podcast Reasoning, Content Analyzer, Batch Validator, Learning |
 
 ### 브랜치 전략
 
 ```
 main ← PR 머지 (3명 전원 승인 필수)
  └── develop ← 통합 테스트 브랜치 (최소 1명 리뷰)
-      ├── feature/analysis-*     (개발자1)
-      ├── feature/reasoning-*    (개발자2)
-      └── feature/validation-*   (개발자3)
+      ├── feature/analysis-*     (이준)
+      ├── feature/reasoning-*    (한가은)
+      └── feature/validation-*   (이경신)
 ```
 
 **규칙:**
@@ -157,13 +157,13 @@ main ← PR 머지 (3명 전원 승인 필수)
 
 | 개발자 | 쓰기 가능 필드 | 읽기 가능 필드 |
 |--------|--------------|--------------|
-| 개발자1 | intent, knowledge_results, final_output, script_draft | user_input, user_id, session_id, mode |
-| 개발자2 | emotion_vectors, risk_level, risk_score, safety_flags, memory_results, visual_data | 개발자1 쓰기 필드 + 개발자1 읽기 필드 |
-| 개발자3 | content_analysis, reasoning_result, validation_result | 전체 필드 읽기 가능 |
+| 이준 | intent, knowledge_results, final_output, script_draft | user_input, user_id, session_id, mode |
+| 한가은 | emotion_vectors, risk_level, risk_score, safety_flags, memory_results, visual_data | 이준 쓰기 필드 + 이준 읽기 필드 |
+| 이경신 | content_analysis, reasoning_result, validation_result | 전체 필드 읽기 가능 |
 
-> **예외**: Intent Classifier(개발자1)는 TIER 0에서 1차 위기 감지를 위해
+> **예외**: Intent Classifier(이준)는 TIER 0에서 1차 위기 감지를 위해
 > risk_level, risk_score, safety_flags를 초기 설정한다.
-> Safety Agent(개발자2)가 TIER 1에서 이 값을 최종 덮어쓴다. (이슈 S-1)
+> Safety Agent(한가은)가 TIER 1에서 이 값을 최종 덮어쓴다. (이슈 S-1)
 
 > **설정 참조**: 에이전트별 런타임 설정값(임계값, 토큰 예산, 타임아웃 등)은
 > `config/settings.yaml`이 단일 진실 소스(SSOT)이다.

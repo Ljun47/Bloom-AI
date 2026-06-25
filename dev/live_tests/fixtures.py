@@ -76,7 +76,7 @@ def make_batch_validator_state() -> dict[str, Any]:
     Batch Validator용 입력 상태 (TIER 3).
 
     TIER 1, TIER 2 결과가 모두 포함된 상태.
-    script_draft는 개발자1(Script Generator) 출력을 시뮬레이션한다.
+    script_draft는 이준(Script Generator) 출력을 시뮬레이션한다.
     """
     return {
         "user_input": (
@@ -154,7 +154,7 @@ def make_batch_validator_state() -> dict[str, Any]:
             "intensity": 0.6,
             "valence": -0.3,
         },
-        # TIER 2 — Script Generator 결과 (개발자1 — 시뮬레이션)
+        # TIER 2 — Script Generator 결과 (이준 — 시뮬레이션)
         "script_draft": {
             "title": "직장 내 갈등, 이렇게 풀어보세요",
             "segments": [
@@ -225,7 +225,7 @@ def make_learning_state() -> dict[str, Any]:
     }
     state["next_step"] = "script_personalizer"
 
-    # TIER 4 — Script Personalizer 결과 (개발자1 — 시뮬레이션)
+    # TIER 4 — Script Personalizer 결과 (이준 — 시뮬레이션)
     state["final_output"] = (
         "직장 내 갈등, 이렇게 풀어보세요 — "
         "오늘은 많은 분들이 고민하시는 직장 내 인간관계에 대해 이야기합니다..."
@@ -342,17 +342,17 @@ def make_pipeline_initial_state() -> dict[str, Any]:
 
 def generate_mock_script(state: dict[str, Any]) -> dict[str, Any]:
     """
-    개발자1(Script Generator) 출력을 시뮬레이션한다.
+    이준(Script Generator) 출력을 시뮬레이션한다.
 
     파이프라인 시뮬레이션에서 TIER 2의 Script Generator 자리를
     대체하는 mock 함수이다.
 
-    개발자1이 Script Generator를 완성하면, 이 함수 호출을
+    이준이 Script Generator를 완성하면, 이 함수 호출을
     실제 ScriptGeneratorAgent()(state) 호출로 교체한다.
 
     왜 mock인가:
-    1. Script Generator는 개발자1 담당이며 아직 구현되지 않았다
-    2. 이 라이브 테스트의 목적은 개발자3 담당 에이전트의 상태 전파 검증이다
+    1. Script Generator는 이준 담당이며 아직 구현되지 않았다
+    2. 이 라이브 테스트의 목적은 이경신 담당 에이전트의 상태 전파 검증이다
     3. Batch Validator가 script_draft 입력을 필요로 하므로 현실적 데이터를 제공한다
 
     Args:

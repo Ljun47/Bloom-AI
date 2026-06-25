@@ -2,7 +2,7 @@
 독립 에이전트 Stub — 통합 전 임시 인터페이스.
 
 Reasoning 계열 에이전트가 조건부로 호출하는 독립 에이전트의 stub 구현.
-- Episode Memory (개발자2) — 팟캐스트모드
+- Episode Memory (한가은) — 팟캐스트모드
 
 KnowledgeAgentStub은 2026-04-15 실제 KnowledgeAgent 정식 활성화와 함께 제거됨.
 (PR #145/#146 완료 → feature/validation-knowledge-activation)

@@ -1,12 +1,12 @@
 """
 Batch Validator — 팟캐스트 스크립트 품질 검증 에이전트.
 
-TIER 3에서 Script Generator(개발자1)가 생성한 script_draft를 검증한다.
+TIER 3에서 Script Generator(이준)가 생성한 script_draft를 검증한다.
 검증 실패 시 TIER 2 재시도를 요청한다.
 최대 2회 재시도 후에는 강제 통과한다.
 iteration_count 증가는 workflow의 increment_iteration_node()가 전담한다.
 
-담당: 개발자3
+담당: 이경신
 출력 필드: validation_result
 모델: Sonnet 4
 """

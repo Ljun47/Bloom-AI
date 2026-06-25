@@ -138,19 +138,19 @@ git push origin feature/analysis-emotion-agent
 
 ## 4. 개발자별 시작점
 
-### 개발자1 (브랜치: feature/analysis-*)
+### 이준 (브랜치: feature/analysis-*)
 
 담당 에이전트: `Intent Classifier`, `Knowledge`, `Script Generator`, `Script Personalizer`
 
 참고: `CLAUDE.md`의 에이전트 구성표, `docs/architecture/AGENT_ROLES.md` 해당 섹션
 
-### 개발자2 (브랜치: feature/reasoning-*)
+### 한가은 (브랜치: feature/reasoning-*)
 
 담당 에이전트: `Safety`, `Emotion`, `Visualization`, `Episode Memory`
 
 참고: `CLAUDE.md`의 에이전트 구성표, `docs/architecture/AGENT_ROLES.md` 해당 섹션
 
-### 개발자3 (브랜치: feature/validation-*)
+### 이경신 (브랜치: feature/validation-*)
 
 담당 에이전트: `Podcast Reasoning`, `Content Analyzer`, `Batch Validator`, `Learning`
 

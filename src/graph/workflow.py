@@ -112,7 +112,7 @@ from src.agents.podcast.script_generator import ScriptGeneratorAgent  # noqa: E4
 from src.agents.podcast.script_personalizer import ScriptPersonalizerAgent  # noqa: E402
 from src.agents.podcast.visualization import visualization_node  # noqa: E402
 
-# --- TIER 0 (개발자1) ---
+# --- TIER 0 (이준) ---
 
 
 async def intent_classifier_node(state: AgentState) -> dict[str, Any]:
@@ -121,7 +121,7 @@ async def intent_classifier_node(state: AgentState) -> dict[str, Any]:
     return await agent(state)
 
 
-# --- TIER 2 팟캐스트모드 (개발자1) ---
+# --- TIER 2 팟캐스트모드 (이준) ---
 
 
 async def script_generator_node(state: AgentState) -> dict[str, Any]:
@@ -179,7 +179,7 @@ async def tier2_podcast_fan_out(state: AgentState) -> dict[str, Any]:
     return merged
 
 
-# --- TIER 4 팟캐스트모드 (개발자1) ---
+# --- TIER 4 팟캐스트모드 (이준) ---
 
 
 async def script_personalizer_node(state: AgentState) -> dict[str, Any]:
@@ -255,7 +255,7 @@ async def _safety_deep_crisis(safety_result: dict[str, Any]) -> dict[str, Any]:
     Safety CRISIS 심화 모드.
 
     Safety Agent가 CRISIS 판정 시 즉시 위기 응답을 생성한다.
-    실제 구현은 Safety Agent(개발자2)가 담당.
+    실제 구현은 Safety Agent(한가은)가 담당.
 
     Args:
         safety_result: Safety Agent의 CRISIS 판정 결과

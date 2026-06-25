@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 # ====================================================================
-# TIER 0: Intent Classifier (개발자1)
+# TIER 0: Intent Classifier (이준)
 # ====================================================================
 
 MOCK_INTENT_PODCAST: dict[str, Any] = {
@@ -42,7 +42,7 @@ MOCK_INTENT_CRISIS: dict[str, Any] = {
 }
 
 # ====================================================================
-# TIER 1: Safety Agent (개발자2)
+# TIER 1: Safety Agent (한가은)
 # ====================================================================
 
 MOCK_SAFETY_SAFE: dict[str, Any] = {
@@ -72,7 +72,7 @@ MOCK_SAFETY_CRISIS: dict[str, Any] = {
 }
 
 # ====================================================================
-# TIER 1: Emotion Agent (개발자2)
+# TIER 1: Emotion Agent (한가은)
 # ====================================================================
 
 MOCK_EMOTION: dict[str, Any] = {
@@ -88,7 +88,7 @@ MOCK_EMOTION: dict[str, Any] = {
 }
 
 # ====================================================================
-# TIER 1: Content Analyzer (개발자3) — 팟캐스트모드
+# TIER 1: Content Analyzer (이경신) — 팟캐스트모드
 # ====================================================================
 
 MOCK_CONTENT_ANALYSIS: dict[str, Any] = {
@@ -106,7 +106,7 @@ MOCK_CONTENT_ANALYSIS: dict[str, Any] = {
 }
 
 # ====================================================================
-# TIER 1: Reasoning (개발자3)
+# TIER 1: Reasoning (이경신)
 # ====================================================================
 
 MOCK_REASONING_PODCAST: dict[str, Any] = {
@@ -146,7 +146,7 @@ MOCK_REASONING_PODCAST: dict[str, Any] = {
 }
 
 # ====================================================================
-# TIER 2: Script Generator (개발자1)
+# TIER 2: Script Generator (이준)
 # ====================================================================
 
 MOCK_SCRIPT_DRAFT: dict[str, Any] = {
@@ -191,7 +191,7 @@ MOCK_SCRIPT_DRAFT: dict[str, Any] = {
 }
 
 # ====================================================================
-# TIER 3: Batch Validator (개발자3)
+# TIER 3: Batch Validator (이경신)
 # ====================================================================
 
 MOCK_BV_PASS: dict[str, Any] = {
@@ -227,7 +227,7 @@ MOCK_BV_FAIL: dict[str, Any] = {
 }
 
 # ====================================================================
-# TIER 3: Validator (개발자3) — 대화모드
+# TIER 3: Validator (이경신) — 대화모드
 # ====================================================================
 
 MOCK_VALIDATOR_PASS: dict[str, Any] = {
@@ -246,7 +246,7 @@ MOCK_VALIDATOR_PASS: dict[str, Any] = {
 }
 
 # ====================================================================
-# TIER 4: Script Personalizer / Personalization (개발자1)
+# TIER 4: Script Personalizer / Personalization (이준)
 # ====================================================================
 
 MOCK_FINAL_OUTPUT_PODCAST: dict[str, Any] = {
@@ -260,7 +260,7 @@ MOCK_FINAL_OUTPUT_PODCAST: dict[str, Any] = {
 }
 
 # ====================================================================
-# 비동기: Visualization (개발자2)
+# 비동기: Visualization (한가은)
 # ====================================================================
 
 MOCK_VISUALIZATION: dict[str, Any] = {
@@ -288,7 +288,7 @@ EXPECTED_PODCAST_FIELDS: list[str] = [
 ]
 
 DEVELOPER_FIELDS_PODCAST: dict[str, list[str]] = {
-    "개발자1": ["intent", "script_draft", "final_output"],
-    "개발자2": ["safety_flags", "emotion_vectors"],
-    "개발자3": ["content_analysis", "reasoning_result", "validation_result"],
+    "이준": ["intent", "script_draft", "final_output"],
+    "한가은": ["safety_flags", "emotion_vectors"],
+    "이경신": ["content_analysis", "reasoning_result", "validation_result"],
 }

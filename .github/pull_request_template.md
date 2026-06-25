@@ -28,9 +28,9 @@
 ## 담당 개발자
 
 <!-- 자신의 브랜치 접두사를 선택해주세요 -->
-- [ ] 개발자1 (feature/analysis-*)
-- [ ] 개발자2 (feature/reasoning-*)
-- [ ] 개발자3 (feature/validation-*)
+- [ ] 이준 (feature/analysis-*)
+- [ ] 한가은 (feature/reasoning-*)
+- [ ] 이경신 (feature/validation-*)
 
 ## Protected Files 변경 여부
 

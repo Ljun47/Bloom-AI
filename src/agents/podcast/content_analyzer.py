@@ -4,7 +4,7 @@ Content Analyzer — 팟캐스트 에피소드 콘텐츠 분석 에이전트.
 TIER 1에서 Safety, Emotion, Podcast Reasoning과 병렬 실행된다.
 팟캐스트 에피소드의 주제·테마·감정 흐름을 분석한다.
 
-담당: 개발자3
+담당: 이경신
 출력 필드: content_analysis
 모델: Sonnet 4
 
