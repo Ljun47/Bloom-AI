@@ -192,12 +192,4 @@ mind-log/
 | 한가은 | Safety, Emotion, Visualization, Episode Memory |
 | 이경신 | Podcast Reasoning, Content Analyzer, Batch Validator, Learning |
 
----
 
-## 라이선스
-
-MIT License
-
----
-
-*마지막 업데이트: 2026-04-14 11:00*
