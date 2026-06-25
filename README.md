@@ -11,6 +11,85 @@
 Mind-Log는 TIER 기반 멀티에이전트 시스템으로 팟캐스트 에피소드를 생성합니다.
 
 ### TIER 기반 파이프라인
+```mermaid
+graph TD
+    %% 1. 노드 정의 (선언 순서로 인접성 및 밸런스 조율)
+    Input["사용자 Input"]
+    mysql_input[(RDB: MySQL)]
+    
+    Intent["Intent Classifier<br>[모드 감지 · 의도 분류 · 1차 위기 감지]"]
+    
+    %% Reasoning을 Content/Emotion보다 먼저 선언하여 제너레이터 좌측/좌상단으로 정렬 유도
+    Reasoning["Podcast_reasoning Agent<br>[CoT/ToT/GoT 기반 다중 상담 전략 생성]"]
+    Content["Content_analyzer Agent<br>[주제·구조·길이 6단계 분석]"]
+    Emotion["Emotion Agent<br>[감정 분류, 강도 추정]"]
+    
+    Memory["Episode_memory Agent<br>[사용자 프로필, 대화 이력, 상호작용 패턴 관리]"]
+    Knowledge["Knowledge Agent<br>[RAG 기반 지식 검색, 관련성 점수 산정]"]
+    
+    Safety["Safety Agent<br>[위기 감지 (CRISIS 선점), 즉시 위기 응답]"]
+    
+    ScriptGen["Script_generator Agent<br>[통합 응답 생성, 다중 정보 병합]"]
+    Vis["Visualization Agent<br>[이미지 프롬프트 변환, 시각화 유형 결정]"]
+    
+    Validator["Batch_validator Agent<br>[5가지 기준(감정 일관성·구조·안전·개인화·톤)<br>실패 시 ➔ TIER 2 재시도 (최대 2회)]"]
+    
+    Personalizer["Script_personalizer Agent<br>[톤·스타일 개인화, 사용자 프로필 기반 최종 조정]"]
+    
+    Output["팟캐스트 에피소드 + 커버 이미지"]
+    Learning["Learning Agent<br>[패턴 학습, 전략 개선]"]
+
+    %% 독립 DB 노드들
+    neo4j_db[(Graph DB: Neo4j)]
+    pinecone_db[(Vector DB: Pinecone)]
+    mysql_knowledge[(RDB: MySQL)]
+
+    %% 2. DB와 에이전트 연결 관계
+    Input <--> mysql_input
+    
+    Reasoning <--> neo4j_db
+    Knowledge <--> pinecone_db
+    Knowledge <--> mysql_knowledge
+
+    %% 사용자 DB(RDB)와 Personalizer 간의 개인화 정보 연동 (실선 변경 완료)
+    mysql_input --> Personalizer
+
+    %% 3. 데이터 흐름 연결
+    Input --> Intent
+    
+    %% Intent Classifier 하단 분기
+    Intent --> Reasoning
+    Intent --> Content
+    Intent --> Emotion
+    Intent <--> Safety
+    
+    %% Reasoning & Memory & Knowledge 상호 연동
+    Reasoning <--> Memory
+    Reasoning <--> Knowledge
+    
+    %% TIER 1 -> Script Generator 취합 (실선 복구)
+    Reasoning --> ScriptGen
+    Content --> ScriptGen
+    Emotion --> ScriptGen
+    Safety --> ScriptGen
+    
+    %% Script Generator <--> Batch Validator 피드백 루프 (양방향)
+    ScriptGen <--> Validator
+    
+    %% Script Generator -> Visualization 분기
+    ScriptGen --> Vis
+    
+    %% Batch Validator -> Script Personalizer
+    Validator --> Personalizer
+    
+    %% 최종 출력 취합 (Bypass 및 후처리)
+    Personalizer --> Output
+    Vis --> Output
+    Safety -.->|CRISIS Bypass 즉시 응답| Output
+    
+    %% 최종 출력 -> Learning Agent
+    Output --> Learning
+```
 
 ```
 TIER 0: Intent Classifier → 의도 분류 + 1차 위기 감지
@@ -39,7 +118,6 @@ TIER 4 (후처리): Script Personalizer
 | 벡터 DB / RAG | Pinecone, KT Cloud RAG Suite |
 | 관계형 DB | MySQL (PyMySQL) |
 | 그래프 DB | Neo4j |
-| 캐시 | Redis (선택적 — Intent Classifier 캐싱용, 사용 시 requirements.txt에 redis 라이브러리 추가 필요) |
 | 이미지 저장 | S3 / CDN |
 | 모니터링 / 추적 | LangSmith (에이전트 트레이싱), Prometheus (메트릭 수집) |
 | 프레임워크 | FastAPI + Uvicorn |
