@@ -1,4 +1,4 @@
-# Bloom AI 서비스의 Mind-Log AI agent
+# Bloom AI 서비스의 Mind-Log AI Multi agent
 
 초개인화 AI 멘탈케어 & 시각화 플랫폼
 
